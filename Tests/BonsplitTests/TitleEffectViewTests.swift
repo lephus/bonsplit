@@ -481,6 +481,33 @@ struct TitleEffectViewTests {
         #expect(highlight == ["red", "green", "blue", "yellow", "cyan", "magenta"], "highlight frames: \(highlight)")
     }
 
+    @Test("Glyph frames are drawn in sRGB, like the title's colors, so they match on any display")
+    func glyphFramesAreSRGB() throws {
+        let host = GlyphHost(environment: FakeEnvironment())
+        defer { host.close() }
+        host.view.configure(kind: .working, style: style, pointSize: 16)
+
+        let star = try #require(host.view.glyphLayer.contents.map { $0 as! CGImage })
+        #expect(star.colorSpace?.name == CGColorSpace.sRGB, "frame color space: \(String(describing: star.colorSpace))")
+
+        // The raw bytes of a fully covered pixel are the running color's sRGB components. (Reading the
+        // pixel through `NSBitmapImageRep.colorAt` would label it Generic RGB and shift it.)
+        let bytes = try #require(star.dataProvider?.data as Data?)
+        let bytesPerPixel = star.bitsPerPixel / 8
+        var solid: [UInt8]?
+        for y in 0..<star.height where solid == nil {
+            for x in 0..<star.width {
+                let offset = y * star.bytesPerRow + x * bytesPerPixel
+                if bytes[offset + 3] == 255 {
+                    solid = Array(bytes[offset..<offset + 3])
+                    break
+                }
+            }
+        }
+        let rgb = try #require(solid, "the ✻ frame has fully covered pixels")
+        #expect(zip(rgb, [0xE8, 0xC4, 0x68] as [Int]).allSatisfy { abs(Int($0) - $1) <= 1 }, "pixel \(rgb), expected E8 C4 68")
+    }
+
     @Test("A still glyph rests on ✻ and pauses with Reduce Motion or when it cannot be seen")
     func glyphRestsOnTheStarWhenStill() throws {
         let environment = FakeEnvironment()

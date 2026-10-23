@@ -10,14 +10,20 @@ struct TabActivityFlash: NSViewRepresentable {
     let tab: TabItem
     let activity: TabActivity
     let style: TitleEffectStyle
+    /// Whether the host presents the bar; see ``BonsplitController/isPresentationActive``.
+    let isPresentationActive: Bool
+    /// The environment the view is created with.
+    let environment: any TitleEffectEnvironment
 
     func makeNSView(context: Context) -> ActivityFlashView {
-        let view = ActivityFlashView()
+        let view = ActivityFlashView(environment: environment)
         view.flashedGeneration = tab.flashedActivityGeneration
         return view
     }
 
     func updateNSView(_ view: ActivityFlashView, context: Context) {
+        // Presentation first: a flash for a generation that arrives while the bar is not presented is dropped.
+        view.isPresentationActive = isPresentationActive
         view.configure(kind: activity.kind, generation: activity.generation, style: style)
         tab.flashedActivityGeneration = view.flashedGeneration
     }

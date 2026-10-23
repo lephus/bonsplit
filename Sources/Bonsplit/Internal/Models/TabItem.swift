@@ -50,8 +50,9 @@ final class TabItem: Identifiable, Hashable, Codable {
     /// The highlight generation whose flash this tab already played or skipped.
     ///
     /// Kept on the tab rather than on the flash view, so a flash view that SwiftUI builds again
-    /// (after the activity paused, or when the tab moved to another pane) does not flash again for
-    /// the same skill or workflow. Not observed, never encoded.
+    /// (after the activity paused, or after the tab was dragged to another pane of the same
+    /// controller, which moves this object) does not flash again for the same skill or workflow.
+    /// APIs that rebuild a tab from a ``Tab`` snapshot start without it. Not observed, never encoded.
     @ObservationIgnored var flashedActivityGeneration: UInt64?
 
     init(

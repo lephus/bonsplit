@@ -59,6 +59,22 @@ public final class BonsplitController {
         didSet { internalController.tabShortcutHintsEnabled = tabShortcutHintsEnabled }
     }
 
+    /// Whether the tab bars may animate agent activity effects.
+    ///
+    /// Hosts turn it off while the controller's views stay alive but cannot be seen, such as a
+    /// background workspace kept in a `ZStack` at zero opacity: AppKit still calls those views
+    /// visible. While it is false, title effects and activity glyphs hold their still look, and the
+    /// flash for a new skill or workflow is dropped rather than played once presentation resumes.
+    /// While it is true the effects' own checks (window occlusion, hidden views, Reduce Motion)
+    /// still apply. Only bars with a ``BonsplitConfiguration/Appearance/titleEffectStyle`` read it,
+    /// so other bars never re-render when it changes. Defaults to `true`.
+    public var isPresentationActive: Bool = true
+
+    /// Where the tab bars' effect views learn whether they can be seen and whether motion is
+    /// allowed; each view reads it once, when it is created. Hosts keep the system environment;
+    /// tests replace it.
+    @ObservationIgnored var titleEffectEnvironment: any TitleEffectEnvironment = SystemTitleEffectEnvironment()
+
     /// Handler for file/URL drops from external apps (e.g., Finder).
     /// Called when files are dropped onto a pane's content area.
     /// Return `true` if the drop was handled.

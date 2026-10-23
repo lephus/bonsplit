@@ -345,6 +345,11 @@ struct TabItemView: View {
     /// with a selected tab style has a probe, so this is false for every other bar. Only the selected
     /// tab's paint uses it.
     let isWindowKey: Bool
+    /// Whether the host presents this bar (``BonsplitController/isPresentationActive``); while false the
+    /// activity effects hold still and drop new flashes. Always true for a bar without a title effect style.
+    let activityEffectsArePresented: Bool
+    /// Where the activity effect views learn whether they can be seen and whether motion is allowed.
+    let activityEffectEnvironment: any TitleEffectEnvironment
     let showsControlShortcutHint: Bool
     let shortcutModifierSymbol: String
     let allowsClose: Bool
@@ -407,9 +412,15 @@ struct TabItemView: View {
         // the next background, and below its icon and title.
         .background {
             if let activity = drawnActivity {
-                TabActivityFlash(tab: tab, activity: activity.activity, style: activity.style)
-                    .allowsHitTesting(false)
-                    .accessibilityHidden(true)
+                TabActivityFlash(
+                    tab: tab,
+                    activity: activity.activity,
+                    style: activity.style,
+                    isPresentationActive: activityEffectsArePresented,
+                    environment: activityEffectEnvironment
+                )
+                .allowsHitTesting(false)
+                .accessibilityHidden(true)
             }
         }
         .background(tabBackground.saturation(paintSaturation))
@@ -833,7 +844,9 @@ struct TabItemView: View {
                             weight: titleWeight == .semibold ? .semibold : .regular
                         ),
                         kind: activity.activity.kind,
-                        style: activity.style
+                        style: activity.style,
+                        isPresentationActive: activityEffectsArePresented,
+                        environment: activityEffectEnvironment
                     )
                     .allowsHitTesting(false)
                     .accessibilityHidden(true)
@@ -900,7 +913,9 @@ struct TabItemView: View {
                 TabActivityGlyph(
                     kind: activity.activity.kind,
                     style: activity.style,
-                    pointSize: activityGlyphPointSize
+                    pointSize: activityGlyphPointSize,
+                    isPresentationActive: activityEffectsArePresented,
+                    environment: activityEffectEnvironment
                 )
                 .allowsHitTesting(false)
                 .accessibilityHidden(true)

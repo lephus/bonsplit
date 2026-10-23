@@ -110,7 +110,7 @@ struct TabActivityTests {
         #expect(bar.views(ActivityFlashView.self).count == expected)
     }
 
-    @Test("A bar without a title effect style does not re-render a tab when its activity changes")
+    @Test("A bar without a title effect style does not re-render a tab when its activity or the presentation flag changes")
     func unstyledBarIgnoresActivityChanges() throws {
         for style in [nil, Optional(style)] {
             let bar = try HostedBar(style: style, titles: ["claude", "zsh"], countsTabEvaluations: true)
@@ -121,11 +121,16 @@ struct TabActivityTests {
 
             bar.tabs[0].activity = TabActivity(kind: .working, accessibilityLabel: "Thinking…")
             try bar.settle(untilQuiet: true)
+            let afterActivity = bar.evaluations.count
+            bar.controller.isPresentationActive = false
+            try bar.settle(untilQuiet: true)
             if style == nil {
-                #expect(bar.evaluations.count == before, "an unstyled bar re-rendered \(bar.evaluations.count - before) tab bodies")
+                #expect(afterActivity == before, "an unstyled bar re-rendered \(afterActivity - before) tab bodies for an activity")
+                #expect(bar.evaluations.count == afterActivity, "an unstyled bar re-rendered for the presentation flag")
             } else {
-                // The same change on a styled bar does re-render the tab, so the probe above is not blind.
-                #expect(bar.evaluations.count > before, "a styled bar must re-render the tab that changed")
+                // The same changes on a styled bar do re-render the tabs, so the probe above is not blind.
+                #expect(afterActivity > before, "a styled bar must re-render the tab that changed")
+                #expect(bar.evaluations.count > afterActivity, "a styled bar must re-render for the presentation flag")
             }
         }
     }
@@ -169,17 +174,20 @@ struct TabActivityTests {
         #expect(plainTab.count(of: "green") == 0)
         #expect(plainTab.count(of: "light") > 20, "the plain icon and title are drawn in the tab's text color")
 
+        // An environment that never lets the effect move, so it holds its still look on any test runner.
+        let still = TitleEffectViewTests.FakeEnvironment()
+        still.visible = false
         let bar = try HostedBar(
             style: probe,
             titles: ["One", "MMM"],
             icon: "terminal.fill",
             tabBarHeight: 40,
-            titleFontSize: 24
+            titleFontSize: 24,
+            environment: still
         )
         defer { bar.close() }
         bar.tabs[1].activity = TabActivity(kind: .working)
         try bar.settle { $0.views(TitleEffectView.self).count == 1 }
-        // Test windows never report themselves visible, so the effect holds its still look.
         let snapshot = try bar.snapshot()
         let title = try snapshot.pixels(inTab: 1, from: titleStart)
         let iconSlot = try snapshot.pixels(inTab: 1, to: titleStart)
@@ -353,6 +361,50 @@ struct TabActivityTests {
         #expect(peak.count(of: "red") > 20, "the title stays on top of the wash")
     }
 
+    @Test("A host that stops presenting the bar pauses its effects and drops new flashes; presenting it again resumes")
+    func hostPausesTabEffects() throws {
+        // A visible environment, so the effects really move while the bar is presented.
+        let environment = TitleEffectViewTests.FakeEnvironment()
+        let bar = try HostedBar(style: style, titles: ["claude", "zsh"], environment: environment)
+        defer { bar.close() }
+        bar.tabs[0].activity = TabActivity(kind: .working)
+        bar.tabs[1].activity = TabActivity(kind: .highlight, generation: 1)
+        try bar.settle {
+            $0.effectViewCounts == [2, 2, 2]
+                && $0.effectAnimationKeys().contains(TitleEffectView.sweepAnimationKey)
+                && $0.effectAnimationKeys().contains(TitleEffectView.flowAnimationKey)
+        }
+        let presented = bar.effectAnimationKeys()
+        #expect(presented.filter { $0 == ActivityGlyphView.cycleAnimationKey }.count == 2, "both glyphs cycle: \(presented)")
+        let flash = try #require(bar.views(ActivityFlashView.self).max {
+            $0.convert($0.bounds, to: nil).minX < $1.convert($1.bounds, to: nil).minX
+        })
+        #expect(flash.flashCount == 1, "the highlight's flash played")
+
+        bar.controller.isPresentationActive = false
+        try bar.settle { $0.presentationStates.allSatisfy { !$0 } }
+        #expect(bar.effectAnimationKeys().isEmpty, "nothing moves while the bar is not presented: \(bar.effectAnimationKeys())")
+        bar.tabs[1].activity = TabActivity(kind: .highlight, generation: 2)
+        try bar.settle { _ in flash.flashRequestCount == 2 }
+        #expect(flash.flashCount == 1, "a new generation does not flash while the bar is not presented")
+        #expect(bar.effectAnimationKeys().isEmpty)
+
+        bar.controller.isPresentationActive = true
+        try bar.settle { $0.effectAnimationKeys().contains(TitleEffectView.sweepAnimationKey) }
+        let resumed = bar.effectAnimationKeys()
+        #expect(resumed.contains(TitleEffectView.sweepAnimationKey), "the working sweep comes back")
+        #expect(resumed.contains(TitleEffectView.flowAnimationKey), "the highlight flow comes back")
+        #expect(resumed.filter { $0 == ActivityGlyphView.cycleAnimationKey }.count == 2, "both glyphs cycle again")
+        #expect(flash.flashCount == 1, "the dropped flash does not play late")
+
+        // Hidden and handed a new generation in the same update: the flash is still dropped.
+        bar.controller.isPresentationActive = false
+        bar.tabs[1].activity = TabActivity(kind: .highlight, generation: 3)
+        try bar.settle { _ in flash.flashRequestCount == 3 }
+        #expect(flash.flashCount == 1, "the bar stopped being presented before the new generation arrived")
+        #expect(bar.effectAnimationKeys().isEmpty)
+    }
+
     @Test("The effect overlay does not take clicks away from the tab")
     func effectDoesNotTakeClicks() throws {
         let bar = try HostedBar(style: style, titles: ["claude", "zsh"])
@@ -445,6 +497,7 @@ struct TabActivityTests {
             titleFontSize: CGFloat = 11,
             tabMaxWidth: CGFloat = 220,
             selectedTabStyle: SelectedTabStyle? = nil,
+            environment: (any TitleEffectEnvironment)? = nil,
             countsTabEvaluations: Bool = false
         ) throws {
             _ = NSApplication.shared
@@ -457,6 +510,9 @@ struct TabActivityTests {
                 titleEffectStyle: style
             )
             controller = BonsplitController(configuration: BonsplitConfiguration(appearance: appearance))
+            if let environment {
+                controller.titleEffectEnvironment = environment
+            }
             if countsTabEvaluations {
                 let evaluations = evaluations
                 controller.tabMiddleClickCapture = { _ in
@@ -492,6 +548,20 @@ struct TabActivityTests {
         /// How many title effects, glyphs and flashes the bar holds, in that order.
         var effectViewCounts: [Int] {
             [views(TitleEffectView.self).count, views(ActivityGlyphView.self).count, views(ActivityFlashView.self).count]
+        }
+
+        /// The animation keys on every effect, glyph and flash layer in the bar.
+        func effectAnimationKeys() -> [String] {
+            views(TitleEffectView.self).flatMap { $0.gradientLayer.animationKeys() ?? [] }
+                + views(ActivityGlyphView.self).flatMap { $0.glyphLayer.animationKeys() ?? [] }
+                + views(ActivityFlashView.self).flatMap { $0.flashLayer.animationKeys() ?? [] }
+        }
+
+        /// Whether each effect, glyph and flash view in the bar may move.
+        var presentationStates: [Bool] {
+            views(TitleEffectView.self).map(\.isPresentationActive)
+                + views(ActivityGlyphView.self).map(\.isPresentationActive)
+                + views(ActivityFlashView.self).map(\.isPresentationActive)
         }
 
         /// Every tab's frame in window coordinates, in tab order.

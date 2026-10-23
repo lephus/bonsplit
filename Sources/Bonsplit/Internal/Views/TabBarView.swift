@@ -1416,6 +1416,9 @@ struct TabBarView: View {
             tabShortcutHintsEnabled: splitViewController.tabShortcutHintsEnabled,
             isFocused: isFocused,
             isWindowKey: isWindowKey,
+            // Read only under a title effect style, so other bars do not depend on the flag.
+            activityEffectsArePresented: appearance.titleEffectStyle == nil || controller.isPresentationActive,
+            activityEffectEnvironment: controller.titleEffectEnvironment,
             showsControlShortcutHint: showsControlShortcutHints,
             shortcutModifierSymbol: controlKeyMonitor.shortcutModifierSymbol,
             allowsClose: controller.configuration.allowCloseTabs,

@@ -24,15 +24,17 @@ struct ActivityGlyphFrames {
 
     private func image(of glyph: String, font: NSFont, color: CGColor, side: CGFloat, scale: CGFloat) -> CGImage? {
         let pixels = Int((side * scale).rounded(.up))
-        guard let context = CGContext(
-            data: nil,
-            width: pixels,
-            height: pixels,
-            bitsPerComponent: 8,
-            bytesPerRow: 0,
-            space: CGColorSpaceCreateDeviceRGB(),
-            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
-        ) else {
+        // sRGB, like the title colors: a device RGB image is not color matched and drifts on wide-gamut displays.
+        guard let space = CGColorSpace(name: CGColorSpace.sRGB),
+              let context = CGContext(
+                  data: nil,
+                  width: pixels,
+                  height: pixels,
+                  bitsPerComponent: 8,
+                  bytesPerRow: 0,
+                  space: space,
+                  bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+              ) else {
             return nil
         }
         context.scaleBy(x: scale, y: scale)
