@@ -222,6 +222,12 @@ enum TabItemStyling {
         hasSelectedTabStyle ? 1.0 : tabSaturation
     }
 
+    /// A tab's accessibility label: its title, then the words of the agent activity it draws, if any.
+    static func accessibilityLabel(title: String, activityLabel: String?) -> String {
+        guard let activityLabel, !activityLabel.isEmpty else { return title }
+        return "\(title), \(activityLabel)"
+    }
+
     static func shouldShowHoverBackground(isHovered: Bool, isSelected: Bool) -> Bool {
         isHovered && !isSelected
     }
@@ -438,7 +444,12 @@ struct TabItemView: View {
             }
         )
         .accessibilityElement(children: .combine)
-        .accessibilityLabel(tab.title)
+        .accessibilityLabel(
+            TabItemStyling.accessibilityLabel(
+                title: tab.title,
+                activityLabel: drawnActivity?.activity.accessibilityLabel
+            )
+        )
         // The close button is only built while selected or hovered and is
         // merged into this element, so VoiceOver needs a named action to
         // close any tab.
@@ -789,19 +800,37 @@ struct TabItemView: View {
     /// from a hidden semibold copy and draws the visible title over it, so a tab keeps its width
     /// when it becomes selected or deselected. Truncation is unchanged: both texts are one line.
     /// Without that style the title is laid out exactly as upstream does.
+    ///
+    /// While the tab draws an agent activity, the title keeps its place and its accessibility text but
+    /// turns clear, and a ``TitleEffectView`` laid over exactly its frame draws the text instead.
     @ViewBuilder
     private var titleLabel: some View {
         let paint = selectedTabPaint
+        let titleWeight = paint?.titleWeight ?? .regular
+        let activity = drawnActivity
         let visibleTitle = Text(tab.title)
-            .font(.system(size: appearance.tabTitleFontSize, weight: paint?.titleWeight ?? .regular))
+            .font(.system(size: appearance.tabTitleFontSize, weight: titleWeight))
             .lineLimit(1)
-            .foregroundStyle(
-                paint.map { Color(nsColor: $0.title) }
-                    ?? (isSelected
-                        ? TabBarColors.activeText(for: appearance)
-                        : TabBarColors.inactiveText(for: appearance))
-            )
+            .foregroundStyle(titleColor(paint: paint, drawsActivity: activity != nil))
             .saturation(paintSaturation)
+            // After the saturation, so the effect keeps its colors in an unfocused pane: it is how
+            // the user sees that an agent works there.
+            .overlay(alignment: .topLeading) {
+                if let activity {
+                    TabTitleEffect(
+                        tab: tab,
+                        title: tab.title,
+                        font: NSFont.systemFont(
+                            ofSize: appearance.tabTitleFontSize,
+                            weight: titleWeight == .semibold ? .semibold : .regular
+                        ),
+                        activity: activity.activity,
+                        style: activity.style
+                    )
+                    .allowsHitTesting(false)
+                    .accessibilityHidden(true)
+                }
+            }
             .tabGeometryDebugFrame { frame in
                 debugRecordGeometry(which: "title", frame: frame)
             }
@@ -846,7 +875,8 @@ struct TabItemView: View {
     }
 
     /// Leading favicon / loading spinner / symbol icon. Shared by the standard and
-    /// icon-only layouts so favicon state handling stays in one place.
+    /// icon-only layouts so favicon state handling stays in one place. While the tab
+    /// draws an agent activity, the activity glyph takes the icon's place.
     @ViewBuilder
     private var leadingIcon: some View {
         let iconSlotSize = scaledIconSize
@@ -855,9 +885,18 @@ struct TabItemView: View {
             : TabBarColors.nsColorInactiveText(for: appearance)
         let iconTint = Color(nsColor: iconTintColor)
         let faviconImage = renderedFaviconImage ?? tab.iconImageData.flatMap { NSImage(data: $0) }
+        let activity = drawnActivity
 
         Group {
-            if tab.isLoading {
+            if let activity {
+                TabActivityGlyph(
+                    kind: activity.activity.kind,
+                    style: activity.style,
+                    pointSize: activityGlyphPointSize
+                )
+                .allowsHitTesting(false)
+                .accessibilityHidden(true)
+            } else if tab.isLoading {
                 // Slightly smaller than the icon slot so it reads cleaner at tab scale.
                 TabLoadingSpinner(size: iconSlotSize * 0.86, color: iconTintColor)
             } else if let image = faviconImage {
@@ -883,8 +922,13 @@ struct TabItemView: View {
                 }
             }
         }
-        // Keep downloaded favicon bitmaps in full color even for inactive tab bars.
-        .saturation(TabItemStyling.iconSaturation(hasRasterIcon: faviconImage != nil, tabSaturation: saturation))
+        // Keep downloaded favicon bitmaps in full color even for inactive tab bars, and the activity
+        // glyph too, like the title effect.
+        .saturation(
+            activity != nil
+                ? 1
+                : TabItemStyling.iconSaturation(hasRasterIcon: faviconImage != nil, tabSaturation: saturation)
+        )
         .transaction { tx in
             // Prevent incidental parent animations from briefly fading icon content.
             tx.animation = nil
@@ -1161,6 +1205,28 @@ struct TabItemView: View {
             hasSelectedTabStyle: isSelected && appearance.selectedTabStyle != nil,
             tabSaturation: saturation
         )
+    }
+
+    /// The title's color: clear while an activity effect draws the text in its place.
+    private func titleColor(paint: SelectedTabPaint?, drawsActivity: Bool) -> Color {
+        if drawsActivity { return .clear }
+        if let paint { return Color(nsColor: paint.title) }
+        return isSelected ? TabBarColors.activeText(for: appearance) : TabBarColors.inactiveText(for: appearance)
+    }
+
+    // MARK: - Agent Activity
+
+    /// The agent activity this tab draws and the style to draw it in: only when the host set a title
+    /// effect style and the tab has an activity. The style is read first, so a bar without one never
+    /// depends on the tab's activity and does not re-render when it changes.
+    private var drawnActivity: (activity: TabActivity, style: TitleEffectStyle)? {
+        guard let style = appearance.titleEffectStyle, let activity = tab.activity else { return nil }
+        return (activity, style)
+    }
+
+    /// Point size of the activity glyph: a point over the title, so it reads like the icon it replaces.
+    private var activityGlyphPointSize: CGFloat {
+        max(8, appearance.tabTitleFontSize + 1)
     }
 
     // MARK: - Tab Background

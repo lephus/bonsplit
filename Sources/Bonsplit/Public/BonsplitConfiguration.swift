@@ -628,6 +628,12 @@ extension BonsplitConfiguration {
         /// system-accent indicator on the top edge.
         public var selectedTabStyle: SelectedTabStyle?
 
+        /// Optional colors and timing for the agent activity effects on tab titles.
+        /// When nil, no tab draws a title effect or an activity glyph, whatever its ``Tab/activity``. When set,
+        /// a tab with an activity draws its title through a ``TitleEffectView`` and shows an
+        /// ``ActivityGlyphView`` in place of its icon.
+        public var titleEffectStyle: TitleEffectStyle?
+
         // MARK: - Presets
 
         public static let `default` = Appearance()
@@ -671,7 +677,8 @@ extension BonsplitConfiguration {
             enableAnimations: Bool = true,
             chromeColors: ChromeColors = .init(),
             usesSharedBackdrop: Bool = false,
-            selectedTabStyle: SelectedTabStyle? = nil
+            selectedTabStyle: SelectedTabStyle? = nil,
+            titleEffectStyle: TitleEffectStyle? = nil
         ) {
             self.tabBarHeight = tabBarHeight
             self.tabMinWidth = tabMinWidth
@@ -695,6 +702,7 @@ extension BonsplitConfiguration {
             self.chromeColors = chromeColors
             self.usesSharedBackdrop = usesSharedBackdrop
             self.selectedTabStyle = selectedTabStyle
+            self.titleEffectStyle = titleEffectStyle
         }
 
         private static func uniqueSplitButtons(_ buttons: [SplitActionButton]) -> [SplitActionButton] {

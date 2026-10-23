@@ -44,6 +44,15 @@ final class TabItem: Identifiable, Hashable, Codable {
     var isPinned: Bool
     var showsRemoteIndicator: Bool
     var presence: TabPresence?
+    /// What a coding agent is doing in this tab; drives the title effect and the activity glyph.
+    /// Runtime state: never encoded.
+    var activity: TabActivity?
+    /// The highlight generation whose flash this tab's title already played or skipped.
+    ///
+    /// Kept on the tab rather than on the effect view, so a title effect that SwiftUI builds again
+    /// (after the activity paused, or when the tab moved to another pane) does not flash again for
+    /// the same skill or workflow. Not observed, never encoded.
+    @ObservationIgnored var flashedActivityGeneration: UInt64?
 
     init(
         id: UUID = UUID(),
@@ -60,7 +69,8 @@ final class TabItem: Identifiable, Hashable, Codable {
         isAudioPlaying: Bool = false,
         isPinned: Bool = false,
         showsRemoteIndicator: Bool = false,
-        presence: TabPresence? = nil
+        presence: TabPresence? = nil,
+        activity: TabActivity? = nil
     ) {
         self.id = id
         self.title = title
@@ -77,6 +87,7 @@ final class TabItem: Identifiable, Hashable, Codable {
         self.isPinned = isPinned
         self.showsRemoteIndicator = showsRemoteIndicator
         self.presence = presence
+        self.activity = activity
     }
 
     func hash(into hasher: inout Hasher) {
@@ -87,6 +98,7 @@ final class TabItem: Identifiable, Hashable, Codable {
         lhs.id == rhs.id
     }
 
+    /// `activity` and `flashedActivityGeneration` are runtime state, so they have no key.
     private enum CodingKeys: String, CodingKey {
         case id
         case title
