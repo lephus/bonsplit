@@ -623,7 +623,9 @@ extension BonsplitConfiguration {
         public var usesSharedBackdrop: Bool
 
         /// Optional tinted style for the selected tab.
-        /// When nil, Bonsplit draws its default selected tab: no fill and a system-accent indicator on the top edge.
+        /// When nil, Bonsplit draws its default selected tab: a fill from the system, or from the tab bar color
+        /// lightened or darkened when the host sets one (clear when the host shares one backdrop), and a
+        /// system-accent indicator on the top edge.
         public var selectedTabStyle: SelectedTabStyle?
 
         // MARK: - Presets

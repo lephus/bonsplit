@@ -335,7 +335,9 @@ struct TabItemView: View {
     let tabShortcutHintsEnabled: Bool
     /// Whether this tab's pane is focused. Gates hint *visibility*, never width.
     let isFocused: Bool
-    /// Whether this tab's window is key. Only the selected tab's paint reads it.
+    /// Whether this tab's window is key, as `TabBarWindowKeyReader` reports it. Only a bar with a
+    /// selected tab style has a reader, so this is false for every other bar. Only the selected
+    /// tab's paint uses it.
     let isWindowKey: Bool
     let showsControlShortcutHint: Bool
     let shortcutModifierSymbol: String
@@ -804,10 +806,13 @@ struct TabItemView: View {
                 debugRecordGeometry(which: "title", frame: frame)
             }
         if appearance.selectedTabStyle?.boldsSelectedTitle == true {
+            // The copy only sizes the slot, so it stays out of the accessibility tree. The modifier
+            // comes before the overlay so that the visible title is unaffected.
             Text(tab.title)
                 .font(.system(size: appearance.tabTitleFontSize, weight: .semibold))
                 .lineLimit(1)
                 .hidden()
+                .accessibilityHidden(true)
                 .overlay(alignment: .leading) { visibleTitle }
         } else {
             visibleTitle

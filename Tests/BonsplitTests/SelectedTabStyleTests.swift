@@ -146,6 +146,86 @@ struct SelectedTabStyleTests {
         }
     }
 
+    @Test("A tab bar without a selected tab style does not re-render when its window gains or loses key")
+    func unstyledBarIgnoresWindowKeyState() throws {
+        let bar = try hostTabBar(style: nil, titles: ["One", "Two"], countsTabEvaluations: true)
+        defer { bar.close() }
+        try bar.settle(untilQuiet: true)
+        #expect(bar.evaluations.count > 0, "the probe must see the first render")
+        try bar.warmUp()
+        let initial = bar.evaluations.count
+
+        for state in [ControlActiveState.inactive, .key, .inactive] {
+            bar.controlActiveState = state
+            try bar.settle(untilQuiet: true)
+        }
+        #expect(bar.evaluations.count == initial, "key changes ran \(bar.evaluations.count - initial) tab bodies")
+
+        // The selection is something the bar does depend on, so the zero above is not a blind probe.
+        bar.select(tabAt: 1)
+        try bar.settle(untilQuiet: true)
+        #expect(bar.evaluations.count > initial, "selecting a tab must re-render the tabs")
+    }
+
+    @Test("A tab bar with a selected tab style repaints when its window gains or loses key")
+    func styledBarFollowsWindowKeyState() throws {
+        let probe = SelectedTabStyle(
+            fillHex: "#FF0000",
+            inactiveWindowFillHex: "#00FF00",
+            unfocusedPaneFillHex: "#0000FF",
+            titleHex: "#FFFFFF",
+            unfocusedPaneTitleHex: "#FFFFFF",
+            indicatorHex: "#FFFF00",
+            unfocusedPaneIndicatorHex: "#00FFFF"
+        )
+        let bar = try hostTabBar(style: probe, countsTabEvaluations: true)
+        defer { bar.close() }
+        try bar.settle(untilQuiet: true)
+        try bar.warmUp()
+        let fill = NSPoint(x: 2, y: Self.barHeight / 2)
+        let fillColorName = { try probeColorName(#require(bar.snapshot().color(at: fill))) }
+        #expect(try fillColorName() == "red", "key window")
+
+        let evaluated = bar.evaluations.count
+        bar.controlActiveState = .inactive
+        try bar.settle(untilQuiet: true)
+        #expect(bar.evaluations.count > evaluated, "the bar must re-render when its window stops being key")
+        #expect(try fillColorName() == "green", "window not key")
+
+        bar.controlActiveState = .key
+        try bar.settle(untilQuiet: true)
+        #expect(try fillColorName() == "red", "key window again")
+    }
+
+    @Test("A bar picks up a selected tab style the host sets after the bar is on screen, and drops it when cleared")
+    func styleSetAfterTheBarIsOnScreen() throws {
+        let probe = SelectedTabStyle(
+            fillHex: "#FF0000",
+            inactiveWindowFillHex: "#00FF00",
+            unfocusedPaneFillHex: "#0000FF",
+            titleHex: "#FFFFFF",
+            unfocusedPaneTitleHex: "#FFFFFF",
+            indicatorHex: "#FFFF00",
+            unfocusedPaneIndicatorHex: "#00FFFF"
+        )
+        let bar = try hostTabBar(style: nil, countsTabEvaluations: true)
+        defer { bar.close() }
+        try bar.settle(untilQuiet: true)
+        let fill = NSPoint(x: 2, y: Self.barHeight / 2)
+        let unstyled = try #require(bar.snapshot().color(at: fill))
+        #expect(probeColorName(unstyled) == "other", "upstream fill: \(describe(unstyled))")
+
+        bar.controller.configuration.appearance.selectedTabStyle = probe
+        try bar.settle(untilQuiet: true)
+        let styled = try #require(bar.snapshot().color(at: fill))
+        #expect(probeColorName(styled) == "red", "style set later: \(describe(styled))")
+
+        bar.controller.configuration.appearance.selectedTabStyle = nil
+        try bar.settle(untilQuiet: true)
+        let cleared = try #require(bar.snapshot().color(at: fill))
+        #expect(probeColorName(cleared) == "other", "style cleared: \(describe(cleared))")
+    }
+
     @Test("The indicator is drawn on the tab's bottom edge at the style's thickness")
     func indicatorSitsOnTheBottomEdge() throws {
         let probe = SelectedTabStyle(
@@ -346,9 +426,141 @@ struct SelectedTabStyleTests {
         }
     }
 
-    /// Renders a pane with one tab per title, the one at `selectedIndex` selected, under `style`,
-    /// and snapshots its tab bar.
-    private func renderTabBar(
+    /// The window key state a hosted tab bar sees. Changing it re-runs only the host view below.
+    @Observable
+    fileprivate final class EnvironmentModel {
+        var controlActiveState: ControlActiveState
+
+        init(controlActiveState: ControlActiveState) {
+            self.controlActiveState = controlActiveState
+        }
+    }
+
+    /// Applies the model's window key state to the tab bar. The tab bar is built once and stored, so
+    /// a change to the model alters only the environment: the tab bar's own view value stays exactly
+    /// as it was, as it does when a real window gains or loses key. Replacing the root view instead
+    /// would hand SwiftUI a new `TabBarView` with fresh `@State`, and the bar would re-render anyway.
+    private struct EnvironmentHost<Content: View>: View {
+        let model: EnvironmentModel
+        let content: Content
+
+        var body: some View {
+            content.environment(\.controlActiveState, model.controlActiveState)
+        }
+    }
+
+    /// A tab bar on screen whose window key state and selection can change after its first render.
+    @MainActor
+    private final class HostedTabBar {
+        /// Counts tab body evaluations through the host's middle-click hook, which every tab
+        /// body calls once. A re-render of the bar moves it; nothing else in the tab bar is observable.
+        final class EvaluationCounter {
+            var count = 0
+        }
+
+        let controller: BonsplitController
+        let tabs: [TabItem]
+        private(set) var selectedIndex: Int
+        let evaluations = EvaluationCounter()
+        private let environment: EnvironmentModel
+        private let pane: PaneState
+        private let window: NSWindow
+        private let hostingView: NSHostingView<AnyView>
+
+        var controlActiveState: ControlActiveState {
+            get { environment.controlActiveState }
+            set { environment.controlActiveState = newValue }
+        }
+
+        init(
+            controller: BonsplitController,
+            pane: PaneState,
+            tabs: [TabItem],
+            selectedIndex: Int,
+            size: NSSize,
+            isFocused: Bool,
+            controlActiveState: ControlActiveState
+        ) {
+            self.controller = controller
+            self.pane = pane
+            self.tabs = tabs
+            self.selectedIndex = selectedIndex
+            environment = EnvironmentModel(controlActiveState: controlActiveState)
+            let tabBar = TabBarView(pane: pane, isFocused: isFocused, showSplitButtons: false)
+                .environment(controller)
+                .environment(controller.internalController)
+            hostingView = NSHostingView(rootView: AnyView(EnvironmentHost(model: environment, content: tabBar)))
+            window = NSWindow(
+                contentRect: NSRect(origin: .zero, size: size),
+                styleMask: [.titled, .closable],
+                backing: .buffered,
+                defer: false
+            )
+            window.isReleasedWhenClosed = false
+            hostingView.frame = NSRect(origin: .zero, size: size)
+            hostingView.autoresizingMask = [.width, .height]
+            window.contentView?.addSubview(hostingView)
+            window.makeKeyAndOrderFront(nil)
+        }
+
+        func close() {
+            window.orderOut(nil)
+        }
+
+        /// Flips the window key state away and back, settling after each, before a test counts evaluations.
+        /// SwiftUI runs the bar's body once on the first update after the first render, whatever that
+        /// update is (`_printChanges` reports "@self changed"). Spending it here keeps it out of the
+        /// count taken around the changes under test.
+        func warmUp() throws {
+            let original = controlActiveState
+            controlActiveState = original == .key ? .inactive : .key
+            try settle(untilQuiet: true)
+            controlActiveState = original
+            try settle(untilQuiet: true)
+        }
+
+        /// Selects another tab, a change the tab bar does depend on.
+        func select(tabAt index: Int) {
+            selectedIndex = index
+            pane.selectedTabId = tabs[index].id
+        }
+
+        /// Every tab's frame the tab bar has reported so far, in tab order.
+        func tabFrames() -> [CGRect] {
+            let chrome = SelectedTabStyleTests.descendants(
+                ofType: TabBarSelectionChromeView.ChromeNSView.self,
+                in: hostingView
+            ).first
+            let frames = chrome.flatMap { $0.geometryRegistry?.frames(for: tabs.map(\.id), in: $0) } ?? [:]
+            return tabs.compactMap { frames[$0.id] }
+        }
+
+        /// Runs layout and the run loop until every tab has reported a frame and, when asked, until no
+        /// tab body has run for several passes, so later evaluations are the test's own doing.
+        func settle(untilQuiet: Bool = false) throws {
+            var quietPasses = 0
+            var settled = false
+            for _ in 0..<300 where !settled {
+                let before = evaluations.count
+                window.contentView?.layoutSubtreeIfNeeded()
+                RunLoop.current.run(mode: .default, before: Date().addingTimeInterval(0.01))
+                quietPasses = evaluations.count == before ? quietPasses + 1 : 0
+                settled = tabFrames().count == tabs.count && (!untilQuiet || quietPasses >= 8)
+            }
+            try #require(settled, "the tab bar never settled")
+        }
+
+        func snapshot() throws -> RenderedTabBar {
+            let bounds = hostingView.bounds.integral
+            let bitmap = try #require(hostingView.bitmapImageRepForCachingDisplay(in: bounds))
+            bitmap.size = bounds.size
+            hostingView.cacheDisplay(in: bounds, to: bitmap)
+            return RenderedTabBar(tabFrames: tabFrames(), selectedIndex: selectedIndex, bounds: bounds, bitmap: bitmap)
+        }
+    }
+
+    /// Puts a pane with one tab per title, the one at `selectedIndex` selected, on screen under `style`.
+    private func hostTabBar(
         style: SelectedTabStyle?,
         titles: [String] = [""],
         selectedIndex: Int = 0,
@@ -357,11 +569,11 @@ struct SelectedTabStyleTests {
         titleFontSize: CGFloat = 11,
         tabMaxWidth: CGFloat = 220,
         isFocused: Bool = true,
-        controlActiveState: ControlActiveState = .key
-    ) throws -> RenderedTabBar {
+        controlActiveState: ControlActiveState = .key,
+        countsTabEvaluations: Bool = false
+    ) throws -> HostedTabBar {
         _ = NSApplication.shared
         let tabBarHeight = tabBarHeight ?? Self.barHeight
-        let size = NSSize(width: barWidth, height: tabBarHeight)
         let appearance = BonsplitConfiguration.Appearance(
             tabBarHeight: tabBarHeight,
             tabMaxWidth: tabMaxWidth,
@@ -380,42 +592,52 @@ struct SelectedTabStyleTests {
         pane.tabs = tabs
         pane.selectedTabId = tabs[selectedIndex].id
 
-        let hostingView = NSHostingView(
-            rootView: TabBarView(pane: pane, isFocused: isFocused, showSplitButtons: false)
-                .environment(controller)
-                .environment(controller.internalController)
-                .environment(\.controlActiveState, controlActiveState)
+        let bar = HostedTabBar(
+            controller: controller,
+            pane: pane,
+            tabs: tabs,
+            selectedIndex: selectedIndex,
+            size: NSSize(width: barWidth, height: tabBarHeight),
+            isFocused: isFocused,
+            controlActiveState: controlActiveState
         )
-        let window = NSWindow(
-            contentRect: NSRect(origin: .zero, size: size),
-            styleMask: [.titled, .closable],
-            backing: .buffered,
-            defer: false
-        )
-        window.isReleasedWhenClosed = false
-        defer { window.orderOut(nil) }
-        let contentView = try #require(window.contentView)
-        hostingView.frame = NSRect(origin: .zero, size: size)
-        hostingView.autoresizingMask = [.width, .height]
-        contentView.addSubview(hostingView)
-        window.makeKeyAndOrderFront(nil)
-
-        // The indicator is drawn from the tabs' measured frames, which arrive a layout pass later.
-        var tabFrames: [CGRect] = []
-        for _ in 0..<100 where tabFrames.count != tabs.count {
-            contentView.layoutSubtreeIfNeeded()
-            RunLoop.current.run(mode: .default, before: Date().addingTimeInterval(0.01))
-            let chrome = descendants(ofType: TabBarSelectionChromeView.ChromeNSView.self, in: hostingView).first
-            let frames = chrome.flatMap { $0.geometryRegistry?.frames(for: tabs.map(\.id), in: $0) } ?? [:]
-            tabFrames = tabs.compactMap { frames[$0.id] }
+        if countsTabEvaluations {
+            let evaluations = bar.evaluations
+            controller.tabMiddleClickCapture = { _ in
+                evaluations.count += 1
+                return AnyView(Color.clear)
+            }
         }
-        try #require(tabFrames.count == tabs.count, "the tabs never reported their frames")
+        return bar
+    }
 
-        let bounds = hostingView.bounds.integral
-        let bitmap = try #require(hostingView.bitmapImageRepForCachingDisplay(in: bounds))
-        bitmap.size = bounds.size
-        hostingView.cacheDisplay(in: bounds, to: bitmap)
-        return RenderedTabBar(tabFrames: tabFrames, selectedIndex: selectedIndex, bounds: bounds, bitmap: bitmap)
+    /// Renders a pane with one tab per title, the one at `selectedIndex` selected, under `style`,
+    /// and snapshots its tab bar.
+    private func renderTabBar(
+        style: SelectedTabStyle?,
+        titles: [String] = [""],
+        selectedIndex: Int = 0,
+        barWidth: CGFloat = 320,
+        tabBarHeight: CGFloat? = nil,
+        titleFontSize: CGFloat = 11,
+        tabMaxWidth: CGFloat = 220,
+        isFocused: Bool = true,
+        controlActiveState: ControlActiveState = .key
+    ) throws -> RenderedTabBar {
+        let bar = try hostTabBar(
+            style: style,
+            titles: titles,
+            selectedIndex: selectedIndex,
+            barWidth: barWidth,
+            tabBarHeight: tabBarHeight,
+            titleFontSize: titleFontSize,
+            tabMaxWidth: tabMaxWidth,
+            isFocused: isFocused,
+            controlActiveState: controlActiveState
+        )
+        defer { bar.close() }
+        try bar.settle()
+        return try bar.snapshot()
     }
 
     /// Width of `title` in the system font at the tab bar's default 11 pt and the given weight.
@@ -423,7 +645,7 @@ struct SelectedTabStyleTests {
         (title as NSString).size(withAttributes: [.font: NSFont.systemFont(ofSize: 11, weight: weight)]).width
     }
 
-    private func descendants<T: NSView>(ofType type: T.Type, in root: NSView) -> [T] {
+    private static func descendants<T: NSView>(ofType type: T.Type, in root: NSView) -> [T] {
         let own = (root as? T).map { [$0] } ?? []
         return own + root.subviews.flatMap { descendants(ofType: type, in: $0) }
     }
