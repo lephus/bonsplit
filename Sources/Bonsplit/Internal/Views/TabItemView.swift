@@ -335,8 +335,8 @@ struct TabItemView: View {
     let tabShortcutHintsEnabled: Bool
     /// Whether this tab's pane is focused. Gates hint *visibility*, never width.
     let isFocused: Bool
-    /// Whether this tab's window is key, as `TabBarWindowKeyReader` reports it. Only a bar with a
-    /// selected tab style has a reader, so this is false for every other bar. Only the selected
+    /// Whether this tab's window is key, as the bar's `TabBarWindowKeyProbe` reports it. Only a bar
+    /// with a selected tab style has a probe, so this is false for every other bar. Only the selected
     /// tab's paint uses it.
     let isWindowKey: Bool
     let showsControlShortcutHint: Bool

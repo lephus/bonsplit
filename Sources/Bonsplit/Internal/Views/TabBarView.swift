@@ -908,6 +908,10 @@ struct TabBarView: View {
     @State private var splitButtonViewportWidth: CGFloat = 0
     @State private var controlKeyMonitor = TabControlShortcutKeyMonitor()
     @State private var tabItemGeometryRegistry = TabBarItemGeometryRegistry()
+    /// Whether the window is key, as `TabBarWindowKeyProbe` last reported it. Only the probe writes it,
+    /// and only while the host has a selected tab style. It starts true: most bars appear in a key window,
+    /// and the probe corrects it as soon as it appears.
+    @State private var windowKeyState = true
 
     private var canScrollLeft: Bool {
         scrollOffset > 1
@@ -928,8 +932,14 @@ struct TabBarView: View {
         controller.configuration.appearance
     }
 
+    /// Whether the window is key, for the selected tab's paint. False without a selected tab style,
+    /// because such a bar has no probe to keep `windowKeyState` current.
+    private var isWindowKey: Bool {
+        appearance.selectedTabStyle != nil && windowKeyState
+    }
+
     /// Paint of the selected tab, or nil while the host has not opted in to a selected tab style.
-    private func selectedTabPaint(isWindowKey: Bool) -> SelectedTabPaint? {
+    private var selectedTabPaint: SelectedTabPaint? {
         guard let style = appearance.selectedTabStyle else { return nil }
         return SelectedTabPaint(style: style, isPaneFocused: isFocused, isWindowKey: isWindowKey)
     }
@@ -1088,9 +1098,9 @@ struct TabBarView: View {
     }
 
     @ViewBuilder
-    private func selectionChrome(isWindowKey: Bool) -> some View {
+    private var selectionChrome: some View {
         // A selected tab style moves the indicator from the top edge to the bottom edge.
-        let paint = selectedTabPaint(isWindowKey: isWindowKey)
+        let paint = selectedTabPaint
         TabBarSelectionChromeView(
             selectedTabId: pane.selectedTabId,
             geometryRegistry: tabItemGeometryRegistry,
@@ -1174,10 +1184,10 @@ struct TabBarView: View {
     /// view tree in reasonable time. In fill/full-width mode `tabRowFillMinWidth`
     /// forces the row to the viewport width so the flexible tabs distribute the slack.
     @ViewBuilder
-    private func tabScrollContent(isWindowKey: Bool) -> some View {
+    private var tabScrollContent: some View {
         HStack(spacing: TabBarMetrics.tabSpacing) {
             ForEach(scrollableTabEntries, id: \.tab.id) { entry in
-                tabItem(for: entry.tab, at: entry.index, isWindowKey: isWindowKey)
+                tabItem(for: entry.tab, at: entry.index)
                     .id(entry.tab.id)
             }
 
@@ -1206,10 +1216,10 @@ struct TabBarView: View {
     }
 
     @ViewBuilder
-    private func pinnedTabContent(isWindowKey: Bool) -> some View {
+    private var pinnedTabContent: some View {
         HStack(spacing: TabBarMetrics.tabSpacing) {
             ForEach(pinnedTabEntries, id: \.tab.id) { entry in
-                tabItem(for: entry.tab, at: entry.index, fillsWidth: false, isWindowKey: isWindowKey)
+                tabItem(for: entry.tab, at: entry.index, fillsWidth: false)
                     .id(entry.tab.id)
             }
         }
@@ -1218,22 +1228,6 @@ struct TabBarView: View {
     }
 
     var body: some View {
-        // Only a bar with a selected tab style paints differently in a window that is not key. SwiftUI
-        // ties an `@Environment` dependency to its declaration, not to where it is read, so the window
-        // state is read by a reader view that exists for styled bars alone. A bar without a style has
-        // no dependency on it anywhere and does not re-render as its window gains or loses key.
-        if appearance.selectedTabStyle != nil {
-            TabBarWindowKeyReader { isWindowKey in
-                strip(isWindowKey: isWindowKey)
-            }
-        } else {
-            strip(isWindowKey: false)
-        }
-    }
-
-    /// The tab bar itself. `isWindowKey` only matters to a selected tab style and is false without one.
-    @ViewBuilder
-    private func strip(isWindowKey: Bool) -> some View {
         let _ = controller.internalController.recordTabBarRender(
             paneId: pane.id,
             tabCount: pane.tabs.count
@@ -1250,12 +1244,12 @@ struct TabBarView: View {
             // Pinned tabs stay outside the scroll view so their frames remain fixed
             // while the unpinned tab row moves through the remaining viewport.
             if !pinnedTabEntries.isEmpty {
-                pinnedTabContent(isWindowKey: isWindowKey)
+                pinnedTabContent
             }
             // Scrollable tabs with fade overlays
             GeometryReader { containerGeo in
                 ScrollView(.horizontal, showsIndicators: false) {
-                    tabScrollContent(isWindowKey: isWindowKey)
+                    tabScrollContent
                 }
                     // When the tab strip is shorter than the visible area, place a single
                     // drag zone over both the empty trailing space AND the 30pt inline
@@ -1308,7 +1302,7 @@ struct TabBarView: View {
                 .allowsHitTesting(false)
                 .tabBarButtonAnimationsDisabled()
         }
-        .overlay(selectionChrome(isWindowKey: isWindowKey))
+        .overlay(selectionChrome)
         .overlay(trailingEmptyChromeDragZone)
         .overlay(alignment: .trailing) {
             splitButtonChrome
@@ -1336,6 +1330,17 @@ struct TabBarView: View {
                     controlKeyMonitor.setHostWindow(window)
                 }
                 .frame(width: 0, height: 0)
+            }
+        }
+        .background {
+            // Only a bar with a selected tab style paints differently in a window that is not key. SwiftUI
+            // ties an `@Environment` dependency to its declaration, not to where it is read, so the probe
+            // that declares it exists for styled bars alone: a bar without a style has no dependency on
+            // the window state anywhere in its tree. The probe sits in the background so that setting or
+            // clearing the style adds or removes only the probe and never rebuilds the tab strip, whose
+            // lifecycle hooks, scroll position and per-tab state must survive a toggle.
+            if appearance.selectedTabStyle != nil {
+                TabBarWindowKeyProbe(isWindowKey: $windowKeyState)
             }
         }
         // Clear drop state when drag ends elsewhere (cancelled, dropped in another pane, etc.)
@@ -1388,8 +1393,7 @@ struct TabBarView: View {
     private func tabItem(
         for tab: TabItem,
         at index: Int,
-        fillsWidth: Bool? = nil,
-        isWindowKey: Bool
+        fillsWidth: Bool? = nil
     ) -> some View {
         let tabFillsWidth = fillsWidth ?? fillsTabsToWidth
         let showsZoomIndicator = splitViewController.zoomedPaneId == pane.id && pane.selectedTabId == tab.id
