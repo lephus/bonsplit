@@ -216,6 +216,12 @@ enum TabItemStyling {
         hasRasterIcon ? 1.0 : tabSaturation
     }
 
+    /// Saturation of a tab's fill and title. A selected tab painted by a ``SelectedTabStyle``
+    /// keeps full color, because its paint already says whether the pane has focus.
+    static func paintSaturation(hasSelectedTabStyle: Bool, tabSaturation: Double) -> Double {
+        hasSelectedTabStyle ? 1.0 : tabSaturation
+    }
+
     static func shouldShowHoverBackground(isHovered: Bool, isSelected: Bool) -> Bool {
         isHovered && !isSelected
     }
@@ -329,6 +335,8 @@ struct TabItemView: View {
     let tabShortcutHintsEnabled: Bool
     /// Whether this tab's pane is focused. Gates hint *visibility*, never width.
     let isFocused: Bool
+    /// Whether this tab's window is key. Only the selected tab's paint reads it.
+    let isWindowKey: Bool
     let showsControlShortcutHint: Bool
     let shortcutModifierSymbol: String
     let allowsClose: Bool
@@ -387,7 +395,7 @@ struct TabItemView: View {
         // titles). Fill mode keeps the flexible behavior so tabs share the strip.
         // Icon-only pinned tabs always size to their fixed compact width.
         .fixedSize(horizontal: isIconOnlyPinned || !fillsWidth, vertical: false)
-        .background(tabBackground.saturation(saturation))
+        .background(tabBackground.saturation(paintSaturation))
         .background(TabPopoverAnchorView(tabId: tab.id, kind: .tabItem))
         // The hint crossfade is animated where it happens (`trailingAccessory`,
         // `iconOnlyContent`). An animation here would wrap the whole tab and
@@ -643,20 +651,22 @@ struct TabItemView: View {
     /// affordances, and the trailing close/pin/dirty accessory.
     @ViewBuilder
     private var standardContent: some View {
+        let paint = selectedTabPaint
         HStack(spacing: 0) {
             // Icon + title block uses the standard spacing, but keep the close affordance tight.
             HStack(spacing: scaledContentSpacing) {
                 leadingIcon
 
                 Text(tab.title)
-                    .font(.system(size: appearance.tabTitleFontSize))
+                    .font(.system(size: appearance.tabTitleFontSize, weight: paint?.titleWeight ?? .regular))
                     .lineLimit(1)
                     .foregroundStyle(
-                        isSelected
-                            ? TabBarColors.activeText(for: appearance)
-                            : TabBarColors.inactiveText(for: appearance)
+                        paint.map { Color(nsColor: $0.title) }
+                            ?? (isSelected
+                                ? TabBarColors.activeText(for: appearance)
+                                : TabBarColors.inactiveText(for: appearance))
                     )
-                    .saturation(saturation)
+                    .saturation(paintSaturation)
                     .tabGeometryDebugFrame { frame in
                         debugRecordGeometry(which: "title", frame: frame)
                     }
@@ -1112,12 +1122,31 @@ struct TabItemView: View {
         return parts.joined(separator: ", ")
     }
 
+    // MARK: - Selected Tab Style
+
+    /// Paint of this tab when it is the selected one and the host set a selected tab style.
+    private var selectedTabPaint: SelectedTabPaint? {
+        guard isSelected, let style = appearance.selectedTabStyle else { return nil }
+        return SelectedTabPaint(style: style, isPaneFocused: isFocused, isWindowKey: isWindowKey)
+    }
+
+    /// Saturation of the tab's fill and title.
+    private var paintSaturation: Double {
+        TabItemStyling.paintSaturation(
+            hasSelectedTabStyle: isSelected && appearance.selectedTabStyle != nil,
+            tabSaturation: saturation
+        )
+    }
+
     // MARK: - Tab Background
 
     @ViewBuilder
     private var tabBackground: some View {
         ZStack(alignment: .top) {
-            if isSelected {
+            if let paint = selectedTabPaint {
+                Rectangle()
+                    .fill(Color(nsColor: paint.fill))
+            } else if isSelected {
                 Rectangle()
                     .fill(TabBarColors.activeTabBackground(for: appearance))
             } else if TabItemStyling.shouldShowHoverBackground(isHovered: isHovered, isSelected: isSelected) {

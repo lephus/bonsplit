@@ -622,6 +622,10 @@ extension BonsplitConfiguration {
         /// that would create visibly different translucent layers.
         public var usesSharedBackdrop: Bool
 
+        /// Optional tinted style for the selected tab.
+        /// When nil, Bonsplit draws its default selected tab: no fill and a system-accent indicator on the top edge.
+        public var selectedTabStyle: SelectedTabStyle?
+
         // MARK: - Presets
 
         public static let `default` = Appearance()
@@ -664,7 +668,8 @@ extension BonsplitConfiguration {
             animationDuration: Double = 0.15,
             enableAnimations: Bool = true,
             chromeColors: ChromeColors = .init(),
-            usesSharedBackdrop: Bool = false
+            usesSharedBackdrop: Bool = false,
+            selectedTabStyle: SelectedTabStyle? = nil
         ) {
             self.tabBarHeight = tabBarHeight
             self.tabMinWidth = tabMinWidth
@@ -687,6 +692,7 @@ extension BonsplitConfiguration {
             self.enableAnimations = enableAnimations
             self.chromeColors = chromeColors
             self.usesSharedBackdrop = usesSharedBackdrop
+            self.selectedTabStyle = selectedTabStyle
         }
 
         private static func uniqueSplitButtons(_ buttons: [SplitActionButton]) -> [SplitActionButton] {

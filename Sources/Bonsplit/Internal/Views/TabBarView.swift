@@ -883,6 +883,7 @@ struct TabContextMenuState {
 struct TabBarView: View {
     @Environment(BonsplitController.self) private var controller
     @Environment(SplitViewController.self) private var splitViewController
+    @Environment(\.controlActiveState) private var controlActiveState
     
     @Bindable var pane: PaneState
     let isFocused: Bool
@@ -926,6 +927,18 @@ struct TabBarView: View {
 
     private var appearance: BonsplitConfiguration.Appearance {
         controller.configuration.appearance
+    }
+
+    /// Whether the window is key, for the selected tab's paint. Read only when the host set
+    /// a style, so a host without one never re-renders the bar as its window gains or loses key.
+    private var isWindowKey: Bool {
+        appearance.selectedTabStyle != nil && controlActiveState == .key
+    }
+
+    /// Paint of the selected tab, or nil while the host has not opted in to a selected tab style.
+    private var selectedTabPaint: SelectedTabPaint? {
+        guard let style = appearance.selectedTabStyle else { return nil }
+        return SelectedTabPaint(style: style, isPaneFocused: isFocused, isWindowKey: isWindowKey)
     }
 
     private var isFullWidthTabMode: Bool {
@@ -1083,10 +1096,14 @@ struct TabBarView: View {
 
     @ViewBuilder
     private var selectionChrome: some View {
+        // A selected tab style moves the indicator from the top edge to the bottom edge.
+        let paint = selectedTabPaint
         TabBarSelectionChromeView(
             selectedTabId: pane.selectedTabId,
             geometryRegistry: tabItemGeometryRegistry,
-            indicatorColor: TabBarColors.nsColorActiveIndicator(saturation: tabBarSaturation),
+            indicatorColor: paint?.indicator ?? TabBarColors.nsColorActiveIndicator(saturation: tabBarSaturation),
+            indicatorThickness: appearance.selectedTabStyle?.indicatorThickness ?? TabBarMetrics.activeIndicatorHeight,
+            indicatorAtBottom: paint != nil,
             separatorColor: TabBarColors.nsColorSeparator(for: appearance),
             mask: selectionChromeMask
         )
@@ -1384,6 +1401,7 @@ struct TabBarView: View {
             controlShortcutDigit: tabControlShortcutDigit(for: index, tabCount: pane.tabs.count),
             tabShortcutHintsEnabled: splitViewController.tabShortcutHintsEnabled,
             isFocused: isFocused,
+            isWindowKey: isWindowKey,
             showsControlShortcutHint: showsControlShortcutHints,
             shortcutModifierSymbol: controlKeyMonitor.shortcutModifierSymbol,
             allowsClose: controller.configuration.allowCloseTabs,

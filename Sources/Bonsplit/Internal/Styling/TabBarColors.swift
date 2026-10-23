@@ -10,6 +10,11 @@ enum TabBarColors {
         static let lightSecondaryTextAlpha: CGFloat = 0.68
     }
 
+    /// Reads `#RRGGBB` or `#RRGGBBAA` with the parser `ChromeColors` uses, or nil when `hex` is not valid.
+    static func nsColor(hex: String) -> NSColor? {
+        NSColor(bonsplitHex: hex)
+    }
+
     private static func chromeBackgroundColor(
         for appearance: BonsplitConfiguration.Appearance
     ) -> NSColor? {

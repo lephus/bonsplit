@@ -14,6 +14,10 @@ struct TabBarSelectionChromeView: NSViewRepresentable {
     let selectedTabId: UUID?
     let geometryRegistry: TabBarItemGeometryRegistry
     let indicatorColor: NSColor
+    /// Height of the indicator in points.
+    var indicatorThickness: CGFloat = TabBarMetrics.activeIndicatorHeight
+    /// Whether the indicator sits on the selected tab's bottom edge instead of its top edge.
+    var indicatorAtBottom = false
     let separatorColor: NSColor
     let mask: TabBarSelectionChromeMask
 
@@ -37,6 +41,8 @@ struct TabBarSelectionChromeView: NSViewRepresentable {
     private func update(_ view: ChromeNSView) {
         view.selectedTabId = selectedTabId
         view.indicatorColor = indicatorColor
+        view.indicatorThickness = indicatorThickness
+        view.indicatorAtBottom = indicatorAtBottom
         view.separatorColor = separatorColor
         view.mask = mask
         view.needsDisplay = true
@@ -46,6 +52,8 @@ struct TabBarSelectionChromeView: NSViewRepresentable {
         weak var geometryRegistry: TabBarItemGeometryRegistry?
         var selectedTabId: UUID?
         var indicatorColor: NSColor = .controlAccentColor
+        var indicatorThickness = TabBarMetrics.activeIndicatorHeight
+        var indicatorAtBottom = false
         var separatorColor: NSColor = .separatorColor
         var mask = TabBarSelectionChromeMask(
             leftFadeWidth: 0,
@@ -153,9 +161,11 @@ struct TabBarSelectionChromeView: NSViewRepresentable {
 
         private func drawSelectedIndicator(in selectedFrame: CGRect?) {
             guard var frame = selectedFrame else { return }
-            frame.origin.y = bounds.minY
+            // This view is flipped: minY is the top edge and maxY the bottom edge.
+            let thickness = min(max(0, indicatorThickness), bounds.height)
+            frame.origin.y = indicatorAtBottom ? bounds.maxY - thickness : bounds.minY
             frame.size.width = max(0, frame.width - TabBarMetrics.activeIndicatorTrailingInset)
-            frame.size.height = TabBarMetrics.activeIndicatorHeight
+            frame.size.height = thickness
 
             let leftFadeFrame = NSRect(
                 x: bounds.minX,
