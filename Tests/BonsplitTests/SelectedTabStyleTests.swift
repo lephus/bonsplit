@@ -178,18 +178,78 @@ struct SelectedTabStyleTests {
         }
     }
 
-    @Test("A bold title makes the selected tab wider; a regular title or no style leaves it as upstream draws it")
-    func boldTitleWidensTheSelectedTab() throws {
+    @Test("Under a style that bolds the title, a tab keeps its width when it is selected or deselected")
+    func boldStyleKeepsTabWidthStable() throws {
+        let titles = ["Terminal session", "Terminal session"]
+        let selectingFirst = try renderTabBar(style: style, titles: titles, selectedIndex: 0)
+        let selectingSecond = try renderTabBar(style: style, titles: titles, selectedIndex: 1)
+
+        // Each tab is measured once selected and once deselected; all four widths must agree.
+        let widths = (selectingFirst.tabFrames + selectingSecond.tabFrames).map(\.width)
+        let spread = (widths.max() ?? 0) - (widths.min() ?? 0)
+        #expect(widths.count == 4)
+        #expect(spread < 0.01, "widths (first selected: A B, second selected: A B): \(widths)")
+    }
+
+    @Test("A style that bolds the title sizes every tab for a semibold title; a regular style or no style lays out as upstream")
+    func boldStyleReservesSemiboldWidth() throws {
         var regular = style
         regular.boldsSelectedTitle = false
         let title = "Terminal session"
 
-        let bold = try renderTabBar(style: style, title: title).tabFrame.width
-        let plain = try renderTabBar(style: regular, title: title).tabFrame.width
-        let unstyled = try renderTabBar(style: nil, title: title).tabFrame.width
+        let bold = try renderTabBar(style: style, titles: [title]).tabFrame.width
+        let plain = try renderTabBar(style: regular, titles: [title]).tabFrame.width
+        let unstyled = try renderTabBar(style: nil, titles: [title]).tabFrame.width
 
-        #expect(bold > plain, "bold \(bold) pt, regular \(plain) pt")
+        // The tab grows by what semibold adds to the title, no more and no less.
+        let extra = titleWidth(title, weight: .semibold) - titleWidth(title, weight: .regular)
+        #expect(extra > 1, "semibold adds \(extra) pt to the title")
+        #expect(abs((bold - plain) - extra) < 1.5, "tab grew \(bold - plain) pt, title grows \(extra) pt")
         #expect(abs(plain - unstyled) < 0.01, "regular \(plain) pt, unstyled \(unstyled) pt")
+    }
+
+    @Test("A tab that is not selected draws its title once, left-aligned like upstream, in the reserved slot")
+    func unselectedTitleIsDrawnOnceAndLeftAligned() throws {
+        // The visible title sits over a hidden semibold copy that only sizes the slot. The copy must
+        // not be drawn, and the title must stay at the leading edge instead of centering in the slot.
+        var regular = style
+        regular.boldsSelectedTitle = false
+        let titles = ["Terminal", "Terminal"]
+
+        // The first tab is deselected and starts at x = 0 in both bars, so its glyphs rasterize alike.
+        // Large type makes semibold several points wider than regular, so centering would show.
+        let reserved = try renderTabBar(
+            style: style, titles: titles, selectedIndex: 1, barWidth: 480, tabBarHeight: 40, titleFontSize: 24
+        )
+        let upstream = try renderTabBar(
+            style: regular, titles: titles, selectedIndex: 1, barWidth: 480, tabBarHeight: 40, titleFontSize: 24
+        )
+        let slot = reserved.ink(in: reserved.tabFrames[0])
+        let plain = upstream.ink(in: upstream.tabFrames[0])
+
+        #expect(plain.total > 0, "the regular title is drawn")
+        #expect(abs(slot.total - plain.total) <= plain.total * 0.05, "ink \(slot.total) against \(plain.total)")
+        let slotLeft = try #require(slot.leftmostX)
+        let plainLeft = try #require(plain.leftmostX)
+        #expect(abs(slotLeft - plainLeft) <= 1, "title starts at \(slotLeft) pt against \(plainLeft) pt")
+    }
+
+    @Test("A title longer than the tab is still cut to one line inside it, selected or not")
+    func longTitleStaysInsideTheTab() throws {
+        let long = String(repeating: "Terminal session ", count: 6)
+        let maximum: CGFloat = 140
+        let bar = try renderTabBar(style: style, titles: [long, long], selectedIndex: 0, tabMaxWidth: maximum)
+
+        // Both tabs clamp to the maximum, whatever their weight.
+        #expect(bar.tabFrames.map(\.width) == [maximum, maximum], "widths: \(bar.tabFrames.map(\.width))")
+
+        // The unselected tab shows no close button, so its trailing padding and accessory slot stay empty.
+        let unselected = bar.tabFrames[1]
+        let trailing = CGRect(x: unselected.maxX - 22, y: unselected.minY, width: 21, height: unselected.height)
+        let spill = bar.colors(in: trailing).filter { components(of: $0).prefix(3).allSatisfy { $0 > 0.2 } }
+        #expect(spill.isEmpty, "\(spill.count) pixels of title ink in the trailing accessory slot")
+        let ink = bar.colors(in: unselected).filter { components(of: $0).prefix(3).allSatisfy { $0 > 0.2 } }
+        #expect(ink.count > 20, "the title is drawn: \(ink.count) pixels")
     }
 
     @Test("The title is drawn in the style's title color for the focused and the unfocused pane")
@@ -208,7 +268,7 @@ struct SelectedTabStyleTests {
             // Large type leaves glyph interiors that are solid title color, not anti-aliased edges.
             let bar = try renderTabBar(
                 style: probe,
-                title: "MMM",
+                titles: ["MMM"],
                 tabBarHeight: 40,
                 titleFontSize: 30,
                 isFocused: isFocused
@@ -225,42 +285,86 @@ struct SelectedTabStyleTests {
     /// A snapshot of one rendered pane tab bar. Its pixels are in the display's
     /// color space, so read them with `probeColorName`.
     private struct RenderedTabBar {
-        /// The selected tab's frame, in points from the top-left of the bar.
-        let tabFrame: CGRect
+        /// Every tab's frame in tab order, in points from the top-left of the bar.
+        let tabFrames: [CGRect]
+        let selectedIndex: Int
         fileprivate let bounds: CGRect
         fileprivate let bitmap: NSBitmapImageRep
 
+        /// The selected tab's frame.
+        var tabFrame: CGRect { tabFrames[selectedIndex] }
+
+        private var pixelsPerPoint: CGSize {
+            CGSize(
+                width: CGFloat(bitmap.pixelsWide) / bounds.width,
+                height: CGFloat(bitmap.pixelsHigh) / bounds.height
+            )
+        }
+
         /// The pixel under `point`, in points from the top-left of the bar.
         func color(at point: NSPoint) -> NSColor? {
-            let x = Int((point.x * CGFloat(bitmap.pixelsWide) / bounds.width).rounded(.down))
-            let y = Int((point.y * CGFloat(bitmap.pixelsHigh) / bounds.height).rounded(.down))
+            let x = Int((point.x * pixelsPerPoint.width).rounded(.down))
+            let y = Int((point.y * pixelsPerPoint.height).rounded(.down))
             guard (0..<bitmap.pixelsWide).contains(x), (0..<bitmap.pixelsHigh).contains(y) else { return nil }
             return bitmap.colorAt(x: x, y: y)
         }
 
-        /// Every pixel inside `rect`, in points from the top-left of the bar.
+        /// Every pixel inside `rect`, with its x in points from the left of the bar.
+        func pixels(in rect: CGRect) -> [(x: CGFloat, color: NSColor)] {
+            let scale = pixelsPerPoint
+            var pixels: [(x: CGFloat, color: NSColor)] = []
+            for y in Int((rect.minY * scale.height).rounded(.up))..<Int((rect.maxY * scale.height).rounded(.down)) {
+                for x in Int((rect.minX * scale.width).rounded(.up))..<Int((rect.maxX * scale.width).rounded(.down)) {
+                    if let color = bitmap.colorAt(x: x, y: y) {
+                        pixels.append((CGFloat(x) / scale.width, color))
+                    }
+                }
+            }
+            return pixels
+        }
+
+        /// Every pixel color inside `rect`.
         func colors(in rect: CGRect) -> [NSColor] {
-            let scaleX = CGFloat(bitmap.pixelsWide) / bounds.width
-            let scaleY = CGFloat(bitmap.pixelsHigh) / bounds.height
-            let xs = Int((rect.minX * scaleX).rounded(.up))..<Int((rect.maxX * scaleX).rounded(.down))
-            let ys = Int((rect.minY * scaleY).rounded(.up))..<Int((rect.maxY * scaleY).rounded(.down))
-            return ys.flatMap { y in xs.compactMap { x in bitmap.colorAt(x: x, y: y) } }
+            pixels(in: rect).map(\.color)
+        }
+
+        /// The summed brightness of the lit pixels inside `rect` and the leftmost x, in points, that has
+        /// one. Used to judge how a title was drawn over the black bar.
+        func ink(in rect: CGRect) -> (total: CGFloat, leftmostX: CGFloat?) {
+            let lit = pixels(in: rect)
+                .map { (x: $0.x, brightness: Self.brightness(of: $0.color)) }
+                .filter { $0.brightness > 0.05 }
+            return (lit.reduce(0) { $0 + $1.brightness }, lit.map(\.x).min())
+        }
+
+        private static func brightness(of color: NSColor) -> CGFloat {
+            var red: CGFloat = 0
+            var green: CGFloat = 0
+            var blue: CGFloat = 0
+            color.getRed(&red, green: &green, blue: &blue, alpha: nil)
+            return (red + green + blue) / 3
         }
     }
 
-    /// Renders a pane whose only tab is selected, under `style`, and snapshots its tab bar.
+    /// Renders a pane with one tab per title, the one at `selectedIndex` selected, under `style`,
+    /// and snapshots its tab bar.
     private func renderTabBar(
         style: SelectedTabStyle?,
-        title: String = "",
-        tabBarHeight: CGFloat = SelectedTabStyleTests.barHeight,
+        titles: [String] = [""],
+        selectedIndex: Int = 0,
+        barWidth: CGFloat = 320,
+        tabBarHeight: CGFloat? = nil,
         titleFontSize: CGFloat = 11,
+        tabMaxWidth: CGFloat = 220,
         isFocused: Bool = true,
         controlActiveState: ControlActiveState = .key
     ) throws -> RenderedTabBar {
         _ = NSApplication.shared
-        let size = NSSize(width: 320, height: tabBarHeight)
+        let tabBarHeight = tabBarHeight ?? Self.barHeight
+        let size = NSSize(width: barWidth, height: tabBarHeight)
         let appearance = BonsplitConfiguration.Appearance(
             tabBarHeight: tabBarHeight,
+            tabMaxWidth: tabMaxWidth,
             tabTitleFontSize: titleFontSize,
             chromeColors: .init(
                 backgroundHex: "#000000",
@@ -272,9 +376,9 @@ struct SelectedTabStyleTests {
         let controller = BonsplitController(configuration: BonsplitConfiguration(appearance: appearance))
         controller.tabShortcutHintsEnabled = false
         let pane = try #require(controller.internalController.rootNode.allPanes.first)
-        let tab = TabItem(title: title, icon: nil)
-        pane.tabs = [tab]
-        pane.selectedTabId = tab.id
+        let tabs = titles.map { TabItem(title: $0, icon: nil) }
+        pane.tabs = tabs
+        pane.selectedTabId = tabs[selectedIndex].id
 
         let hostingView = NSHostingView(
             rootView: TabBarView(pane: pane, isFocused: isFocused, showSplitButtons: false)
@@ -296,21 +400,27 @@ struct SelectedTabStyleTests {
         contentView.addSubview(hostingView)
         window.makeKeyAndOrderFront(nil)
 
-        // The indicator is drawn from the tab's measured frame, which arrives a layout pass later.
-        var tabFrame: CGRect?
-        for _ in 0..<100 where tabFrame == nil {
+        // The indicator is drawn from the tabs' measured frames, which arrive a layout pass later.
+        var tabFrames: [CGRect] = []
+        for _ in 0..<100 where tabFrames.count != tabs.count {
             contentView.layoutSubtreeIfNeeded()
             RunLoop.current.run(mode: .default, before: Date().addingTimeInterval(0.01))
             let chrome = descendants(ofType: TabBarSelectionChromeView.ChromeNSView.self, in: hostingView).first
-            tabFrame = chrome.flatMap { $0.geometryRegistry?.frame(for: tab.id, in: $0) }
+            let frames = chrome.flatMap { $0.geometryRegistry?.frames(for: tabs.map(\.id), in: $0) } ?? [:]
+            tabFrames = tabs.compactMap { frames[$0.id] }
         }
-        let measuredTabFrame = try #require(tabFrame, "the selected tab never reported a frame")
+        try #require(tabFrames.count == tabs.count, "the tabs never reported their frames")
 
         let bounds = hostingView.bounds.integral
         let bitmap = try #require(hostingView.bitmapImageRepForCachingDisplay(in: bounds))
         bitmap.size = bounds.size
         hostingView.cacheDisplay(in: bounds, to: bitmap)
-        return RenderedTabBar(tabFrame: measuredTabFrame, bounds: bounds, bitmap: bitmap)
+        return RenderedTabBar(tabFrames: tabFrames, selectedIndex: selectedIndex, bounds: bounds, bitmap: bitmap)
+    }
+
+    /// Width of `title` in the system font at the tab bar's default 11 pt and the given weight.
+    private func titleWidth(_ title: String, weight: NSFont.Weight) -> CGFloat {
+        (title as NSString).size(withAttributes: [.font: NSFont.systemFont(ofSize: 11, weight: weight)]).width
     }
 
     private func descendants<T: NSView>(ofType type: T.Type, in root: NSView) -> [T] {

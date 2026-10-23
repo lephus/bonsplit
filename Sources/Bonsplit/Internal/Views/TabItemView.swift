@@ -651,25 +651,12 @@ struct TabItemView: View {
     /// affordances, and the trailing close/pin/dirty accessory.
     @ViewBuilder
     private var standardContent: some View {
-        let paint = selectedTabPaint
         HStack(spacing: 0) {
             // Icon + title block uses the standard spacing, but keep the close affordance tight.
             HStack(spacing: scaledContentSpacing) {
                 leadingIcon
 
-                Text(tab.title)
-                    .font(.system(size: appearance.tabTitleFontSize, weight: paint?.titleWeight ?? .regular))
-                    .lineLimit(1)
-                    .foregroundStyle(
-                        paint.map { Color(nsColor: $0.title) }
-                            ?? (isSelected
-                                ? TabBarColors.activeText(for: appearance)
-                                : TabBarColors.inactiveText(for: appearance))
-                    )
-                    .saturation(paintSaturation)
-                    .tabGeometryDebugFrame { frame in
-                        debugRecordGeometry(which: "title", frame: frame)
-                    }
+                titleLabel
 
                 if let presence = tab.presence, presence.showsAccessory {
                     // Reserves the accessory's space in the title row. The live
@@ -791,6 +778,39 @@ struct TabItemView: View {
 
             // Close button / dirty indicator / shortcut hint share the same trailing slot.
             trailingAccessory
+        }
+    }
+
+    /// The tab's title.
+    ///
+    /// When the host's selected tab style bolds the selected title, every tab sizes its title slot
+    /// from a hidden semibold copy and draws the visible title over it, so a tab keeps its width
+    /// when it becomes selected or deselected. Truncation is unchanged: both texts are one line.
+    /// Without that style the title is laid out exactly as upstream does.
+    @ViewBuilder
+    private var titleLabel: some View {
+        let paint = selectedTabPaint
+        let visibleTitle = Text(tab.title)
+            .font(.system(size: appearance.tabTitleFontSize, weight: paint?.titleWeight ?? .regular))
+            .lineLimit(1)
+            .foregroundStyle(
+                paint.map { Color(nsColor: $0.title) }
+                    ?? (isSelected
+                        ? TabBarColors.activeText(for: appearance)
+                        : TabBarColors.inactiveText(for: appearance))
+            )
+            .saturation(paintSaturation)
+            .tabGeometryDebugFrame { frame in
+                debugRecordGeometry(which: "title", frame: frame)
+            }
+        if appearance.selectedTabStyle?.boldsSelectedTitle == true {
+            Text(tab.title)
+                .font(.system(size: appearance.tabTitleFontSize, weight: .semibold))
+                .lineLimit(1)
+                .hidden()
+                .overlay(alignment: .leading) { visibleTitle }
+        } else {
+            visibleTitle
         }
     }
 
