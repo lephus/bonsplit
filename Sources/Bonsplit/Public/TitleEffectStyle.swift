@@ -1,6 +1,7 @@
 import Foundation
 
-/// Colors and timing of the agent activity effects drawn by ``TitleEffectView`` and ``ActivityGlyphView``.
+/// Colors and timing of the agent activity effects drawn by ``TitleEffectView``, ``ActivityGlyphView``
+/// and ``ActivityFlashView``.
 ///
 /// Hosts opt the pane tab bar in through ``BonsplitConfiguration/Appearance/titleEffectStyle``.
 /// Every color is a hex string (`#RRGGBB` or `#RRGGBBAA`), read the same way as
@@ -19,16 +20,18 @@ import Foundation
 /// )
 /// ```
 public struct TitleEffectStyle: Sendable, Equatable {
-    /// Hex color of a working title; the highlight sweeps across it, and a still title shows only it.
+    /// Hex color of a working title while the highlight sweeps across it.
     public var workingBaseHex: String
 
     /// Hex color of the highlight that sweeps across a working title from left to right.
     public var workingHighlightHex: String
 
-    /// Hex color of the activity glyph while the agent is working.
+    /// Hex "running" color: the activity glyph while the agent is working, and a working title that
+    /// holds still (Reduce Motion, or not visible).
     public var glyphWorkingHex: String
 
-    /// Hex color of the one-time flash at its peak, alpha included (for example `#d6c4ff42` for 26%).
+    /// Hex color of the one-time flash over the whole tab or row at its peak, alpha included (for
+    /// example `#d6c4ff42` for 26%).
     public var flashHex: String
 
     /// Hex colors a highlighted title flows through from left to right, and the glyph takes one per frame.

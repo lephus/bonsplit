@@ -2,20 +2,22 @@ import AppKit
 import QuartzCore
 
 /// A title drawn in moving color while a coding agent works: a highlight sweeping across gold text,
-/// or pastel colors flowing after a one-time flash when a skill or workflow starts.
+/// or pastel colors flowing while a skill or workflow runs.
 ///
 /// The view draws the text itself, as a mask over a `CAGradientLayer`, so the real title under it
 /// keeps the layout and the accessibility text and only turns its own color clear. Lay the view
 /// exactly over the title's text: the text starts at the view's top-left corner with no padding.
 /// One line is cut at the tail like SwiftUI's `Text`; more lines wrap at words like a wrapping
 /// `NSTextField` and the last allowed line is cut at the tail. The view is decorative: it takes no
-/// clicks and is not an accessibility element.
+/// clicks and is not an accessibility element. The one-time flash when a skill or workflow starts
+/// covers the whole tab or row, so it is a separate view, ``ActivityFlashView``.
 ///
 /// Everything moves on the render server through Core Animation; the main thread only draws the
 /// text mask again when the text, its font, the view's size or the line limit change. The view
 /// moves only while ``isPresentationActive`` is true and its ``TitleEffectEnvironment`` says it
-/// can be seen and motion is allowed. Otherwise it holds a still look: a working title in the base
-/// color, a highlighted title in a still pastel gradient, and no flash.
+/// can be seen and motion is allowed. Otherwise it holds a still look: a working title in the
+/// running color (``TitleEffectStyle/glyphWorkingHex``) and a highlighted title in a still pastel
+/// gradient.
 ///
 /// ```swift
 /// let effect = TitleEffectView()
@@ -24,7 +26,6 @@ import QuartzCore
 ///     text: NSAttributedString(string: "claude", attributes: [.font: NSFont.systemFont(ofSize: 11)]),
 ///     maximumNumberOfLines: 1,
 ///     kind: .working,
-///     generation: 0,
 ///     style: style
 /// )
 /// ```
@@ -35,32 +36,14 @@ public final class TitleEffectView: NSView {
     /// Key of the highlight's color flow on ``gradientLayer``.
     static let flowAnimationKey = "titleEffect.flow"
 
-    /// Key of the one-time flash on ``flashLayer``.
-    static let flashAnimationKey = "titleEffect.flash"
-
     /// The colored text: a gradient masked by ``textMaskLayer``.
     let gradientLayer = CAGradientLayer()
 
     /// The text as an alpha mask.
     let textMaskLayer = CALayer()
 
-    /// The wash over the title that flashes once when a highlight starts.
-    let flashLayer = CALayer()
-
-    /// Flashes played so far.
-    private(set) var flashCount = 0
-
-    /// Highlight generations that asked for a flash so far, whether it could play or not.
-    private(set) var flashRequestCount = 0
-
     /// Times the text mask was drawn so far.
     private(set) var maskRenderCount = 0
-
-    /// The highlight generation whose flash this view played or skipped.
-    ///
-    /// A host that builds the view again for a title it already showed sets this first, so the same
-    /// skill or workflow does not flash twice.
-    var flashedGeneration: UInt64?
 
     /// Whether the effect may move: hosts turn it off for titles that are scrolled away or not presented.
     ///
@@ -79,7 +62,6 @@ public final class TitleEffectView: NSView {
     private var kind: TabActivity.Kind?
     private var style: TitleEffectStyle?
     private var colors: TitleEffectColors?
-    private var isFlashPending = false
     private var laidOutSize: CGSize?
 
     /// The mask image last drawn, and what it was drawn for.
@@ -129,13 +111,11 @@ public final class TitleEffectView: NSView {
     ///   - maximumNumberOfLines: The title's line limit: `1` for one line cut at the tail, more to wrap
     ///     at words, `0` for no limit.
     ///   - kind: The effect, or nil to hide it.
-    ///   - generation: The highlight's generation; a generation this view has not shown yet flashes once.
     ///   - style: The colors and timing.
     public func configure(
         text: NSAttributedString,
         maximumNumberOfLines: Int,
         kind: TabActivity.Kind?,
-        generation: UInt64,
         style: TitleEffectStyle
     ) {
         let textChanged = mask.map { !$0.text.isEqual(to: text) || $0.maximumNumberOfLines != maximumNumberOfLines } ?? true
@@ -154,18 +134,7 @@ public final class TitleEffectView: NSView {
         }
         let kindChanged = self.kind != kind
         self.kind = kind
-        var flashRequested = false
-        if kind == .highlight {
-            if generation != flashedGeneration {
-                flashedGeneration = generation
-                flashRequestCount += 1
-                isFlashPending = true
-                flashRequested = true
-            }
-        } else {
-            isFlashPending = false
-        }
-        guard textChanged || styleChanged || kindChanged || flashRequested else { return }
+        guard textChanged || styleChanged || kindChanged else { return }
         renderMaskIfNeeded()
         updateAnimationState()
     }
@@ -229,11 +198,7 @@ public final class TitleEffectView: NSView {
         layer.masksToBounds = false
         gradientLayer.mask = textMaskLayer
         gradientLayer.isHidden = true
-        flashLayer.opacity = 0
-        flashLayer.cornerRadius = 3
-        flashLayer.isHidden = true
         layer.addSublayer(gradientLayer)
-        layer.addSublayer(flashLayer)
     }
 
     /// Fits the layers to a new size, draws the mask for it and decides again whether to move.
@@ -244,7 +209,6 @@ public final class TitleEffectView: NSView {
         CATransaction.setDisableActions(true)
         gradientLayer.frame = bounds
         textMaskLayer.frame = gradientLayer.bounds
-        flashLayer.frame = bounds
         CATransaction.commit()
         renderMaskIfNeeded()
         updateAnimationState()
@@ -290,17 +254,11 @@ public final class TitleEffectView: NSView {
         applyLayerValues(animating: animates)
         guard animates, let kind, let style else {
             removeEffectAnimations()
-            // A flash belongs to the start of a highlight: one that cannot play while the view is on
-            // screen is dropped, not saved for later. A view that is not laid out on screen yet keeps it.
-            if isFlashPending, window != nil, !bounds.isEmpty {
-                isFlashPending = false
-            }
             return
         }
         switch kind {
         case .working:
             gradientLayer.removeAnimation(forKey: Self.flowAnimationKey)
-            flashLayer.removeAnimation(forKey: Self.flashAnimationKey)
             if gradientLayer.animation(forKey: Self.sweepAnimationKey) == nil {
                 gradientLayer.add(
                     makeTravel(startX: Self.sweepStartX, span: Self.sweepSpan, duration: style.workingSweepDuration),
@@ -315,11 +273,6 @@ public final class TitleEffectView: NSView {
                     forKey: Self.flowAnimationKey
                 )
             }
-            if isFlashPending {
-                isFlashPending = false
-                flashLayer.add(makeFlash(style: style), forKey: Self.flashAnimationKey)
-                flashCount += 1
-            }
         }
     }
 
@@ -330,13 +283,11 @@ public final class TitleEffectView: NSView {
         defer { CATransaction.commit() }
         guard let kind, let colors = resolvedColors else {
             gradientLayer.isHidden = true
-            flashLayer.isHidden = true
             return
         }
         gradientLayer.isHidden = false
         switch kind {
         case .working:
-            flashLayer.isHidden = true
             if animating {
                 let base = colors.workingBase
                 gradientLayer.colors = [base, base, colors.workingHighlight, base, base]
@@ -344,14 +295,13 @@ public final class TitleEffectView: NSView {
                 gradientLayer.startPoint = CGPoint(x: Self.sweepStartX, y: 0.5)
                 gradientLayer.endPoint = CGPoint(x: Self.sweepStartX + Self.sweepSpan, y: 0.5)
             } else {
-                gradientLayer.colors = [colors.workingBase, colors.workingBase]
+                // A working title that holds still is drawn in the running color, the glyph's.
+                gradientLayer.colors = [colors.glyphWorking, colors.glyphWorking]
                 gradientLayer.locations = nil
                 gradientLayer.startPoint = CGPoint(x: 0, y: 0.5)
                 gradientLayer.endPoint = CGPoint(x: 1, y: 0.5)
             }
         case .highlight:
-            flashLayer.isHidden = false
-            flashLayer.backgroundColor = colors.flash
             // Still or moving, the title starts on the first half of the loop.
             gradientLayer.colors = colors.highlightGradient
             gradientLayer.locations = nil
@@ -363,7 +313,6 @@ public final class TitleEffectView: NSView {
     private func removeEffectAnimations() {
         gradientLayer.removeAnimation(forKey: Self.sweepAnimationKey)
         gradientLayer.removeAnimation(forKey: Self.flowAnimationKey)
-        flashLayer.removeAnimation(forKey: Self.flashAnimationKey)
     }
 
     /// Slides the gradient one step to the right forever: its start point from `startX` to `0`, its
@@ -387,19 +336,6 @@ public final class TitleEffectView: NSView {
         // A smooth slide needs no more than 60 Hz, even on faster displays.
         travel.preferredFrameRateRange = CAFrameRateRange(minimum: 30, maximum: 60, preferred: 60)
         return travel
-    }
-
-    /// One beat of the wash: up to its color's full alpha, then back to nothing.
-    private func makeFlash(style: TitleEffectStyle) -> CAAnimation {
-        let rise = max(0, style.flashRiseDuration)
-        let total = max(0.01, rise + max(0, style.flashFadeDuration))
-        let flash = CAKeyframeAnimation(keyPath: "opacity")
-        flash.values = [0, 1, 0]
-        flash.keyTimes = [0, NSNumber(value: rise / total), 1]
-        flash.timingFunctions = [CAMediaTimingFunction(name: .easeOut), CAMediaTimingFunction(name: .easeOut)]
-        flash.duration = total
-        flash.preferredFrameRateRange = CAFrameRateRange(minimum: 30, maximum: 60, preferred: 60)
-        return flash
     }
 
     /// A begin time on the shared media clock, so every effect of the same duration moves in step.

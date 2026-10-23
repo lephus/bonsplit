@@ -93,7 +93,7 @@ struct TabActivityTests {
     // MARK: - Tab bar
 
     @Test(
-        "The tab bar draws the effect and the glyph only for a tab with an activity under a title effect style",
+        "The tab bar draws the effect, the glyph and the flash only for a tab with an activity under a title effect style",
         arguments: [(true, true), (true, false), (false, true), (false, false)]
     )
     func effectNeedsActivityAndStyle(hasStyle: Bool, hasActivity: Bool) throws {
@@ -103,10 +103,11 @@ struct TabActivityTests {
             bar.tabs[0].activity = TabActivity(kind: .working)
         }
         let expected = hasStyle && hasActivity ? 1 : 0
-        try bar.settle { $0.views(TitleEffectView.self).count == expected && $0.views(ActivityGlyphView.self).count == expected }
+        try bar.settle { $0.effectViewCounts == [expected, expected, expected] }
 
         #expect(bar.views(TitleEffectView.self).count == expected)
         #expect(bar.views(ActivityGlyphView.self).count == expected)
+        #expect(bar.views(ActivityFlashView.self).count == expected)
     }
 
     @Test("A bar without a title effect style does not re-render a tab when its activity changes")
@@ -129,7 +130,7 @@ struct TabActivityTests {
         }
     }
 
-    @Test("Clearing a tab's activity removes its effect and glyph")
+    @Test("Clearing a tab's activity removes its effect, glyph and flash")
     func clearingActivityRemovesTheEffect() throws {
         let bar = try HostedBar(style: style, titles: ["claude", "zsh"])
         defer { bar.close() }
@@ -137,12 +138,13 @@ struct TabActivityTests {
         try bar.settle { $0.views(TitleEffectView.self).count == 1 }
 
         bar.tabs[0].activity = nil
-        try bar.settle { $0.views(TitleEffectView.self).isEmpty && $0.views(ActivityGlyphView.self).isEmpty }
+        try bar.settle { $0.effectViewCounts == [0, 0, 0] }
         #expect(bar.views(TitleEffectView.self).isEmpty)
         #expect(bar.views(ActivityGlyphView.self).isEmpty)
+        #expect(bar.views(ActivityFlashView.self).isEmpty)
     }
 
-    @Test("Under an effect the title is drawn in the effect colors and the glyph takes the icon's place")
+    @Test("Under a still working effect the title and the glyph, in the icon's place, are drawn in the running color")
     func effectDrawsTheTitleAndTheGlyph() throws {
         let probe = TitleEffectStyle(
             workingBaseHex: "#FF0000",
@@ -151,6 +153,7 @@ struct TabActivityTests {
             flashHex: "#00000000",
             highlightStopHexes: ["#FF0000", "#FF0000"]
         )
+        let titleStart = TabBarMetrics.tabHorizontalPadding + TabBarMetrics.iconSize + TabBarMetrics.contentSpacing / 2
         // The second tab is not selected, so no close button draws in it; its icon and title are grey.
         let plain = try HostedBar(
             style: probe,
@@ -176,11 +179,14 @@ struct TabActivityTests {
         defer { bar.close() }
         bar.tabs[1].activity = TabActivity(kind: .working)
         try bar.settle { $0.views(TitleEffectView.self).count == 1 }
-        let tab = try bar.snapshot().pixels(inTab: 1)
-        // Test windows never report themselves visible, so the effect holds its still look: the base color.
-        #expect(tab.count(of: "red") > 20, "the title is drawn in the effect's base color")
-        #expect(tab.count(of: "green") > 5, "the glyph is drawn in the icon slot")
-        #expect(tab.count(of: "light") == 0, "neither the icon nor the title text is drawn")
+        // Test windows never report themselves visible, so the effect holds its still look.
+        let snapshot = try bar.snapshot()
+        let title = try snapshot.pixels(inTab: 1, from: titleStart)
+        let iconSlot = try snapshot.pixels(inTab: 1, to: titleStart)
+        #expect(title.count(of: "green") > 20, "a still working title is drawn in the running color")
+        #expect(title.count(of: "red") == 0, "not in the base color the sweep runs over")
+        #expect(iconSlot.count(of: "green") > 5, "the glyph is drawn in the icon slot")
+        #expect(title.count(of: "light") + iconSlot.count(of: "light") == 0, "neither the icon nor the title text is drawn")
     }
 
     @Test("Under an effect the real title and icon are not drawn at all, only the effect is")
@@ -211,27 +217,29 @@ struct TabActivityTests {
 
     @Test("The effect lies exactly over the title: same glyphs, same place, same ellipsis")
     func effectInkMatchesTheTitle() throws {
+        // A still working title takes the running color, so every effect color is white.
         let white = TitleEffectStyle(
             workingBaseHex: "#FFFFFF",
             workingHighlightHex: "#FFFFFF",
-            glyphWorkingHex: "#000000",
+            glyphWorkingHex: "#FFFFFF",
             flashHex: "#00000000",
             highlightStopHexes: ["#FFFFFF", "#FFFFFF"]
         )
         let titles = ["One", "Terminal session that is far too long to fit"]
-        // Past the icon slot only the title draws, and the selected tab's close button, which neither run changes.
+        // Past the icon slot, where the icon or the glyph draws, only the title draws, and the selected
+        // tab's close button, which neither run changes.
         let titleStart = TabBarMetrics.tabHorizontalPadding + TabBarMetrics.iconSize + TabBarMetrics.contentSpacing / 2
         for (index, title) in titles.enumerated() {
             let plain = try HostedBar(style: white, titles: titles, icon: "terminal.fill", tabMaxWidth: 160)
             defer { plain.close() }
             try plain.settle()
-            let plainInk = try plain.snapshot().pixels(inTab: index, skippingLeading: titleStart).inkBox()
+            let plainInk = try plain.snapshot().pixels(inTab: index, from: titleStart).inkBox()
 
             let bar = try HostedBar(style: white, titles: titles, icon: "terminal.fill", tabMaxWidth: 160)
             defer { bar.close() }
             bar.tabs[index].activity = TabActivity(kind: .working)
             try bar.settle { $0.views(TitleEffectView.self).count == 1 }
-            let effectInk = try bar.snapshot().pixels(inTab: index, skippingLeading: titleStart).inkBox()
+            let effectInk = try bar.snapshot().pixels(inTab: index, from: titleStart).inkBox()
 
             let plainBox = try #require(plainInk, "\(title): no title ink")
             let effectBox = try #require(effectInk, "\(title): no effect ink")
@@ -264,22 +272,85 @@ struct TabActivityTests {
         defer { bar.close() }
         let skill = TabActivity(kind: .highlight, generation: 5)
         bar.tabs[0].activity = skill
-        try bar.settle { $0.views(TitleEffectView.self).count == 1 }
-        let first = try #require(bar.views(TitleEffectView.self).first)
+        try bar.settle { $0.views(ActivityFlashView.self).count == 1 }
+        let first = try #require(bar.views(ActivityFlashView.self).first)
         #expect(first.flashRequestCount == 1, "a new highlight asks for its flash")
 
         // The agent stops to ask for permission: no effect while it waits.
         bar.tabs[0].activity = nil
-        try bar.settle { $0.views(TitleEffectView.self).isEmpty }
+        try bar.settle { $0.views(ActivityFlashView.self).isEmpty }
         bar.tabs[0].activity = skill
-        try bar.settle { $0.views(TitleEffectView.self).count == 1 }
-        let resumed = try #require(bar.views(TitleEffectView.self).first)
-        #expect(resumed !== first, "SwiftUI built a new effect view")
+        try bar.settle { $0.views(ActivityFlashView.self).count == 1 }
+        let resumed = try #require(bar.views(ActivityFlashView.self).first)
+        #expect(resumed !== first, "SwiftUI built a new flash view")
+        #expect(resumed.flashedGeneration == 5, "the tab told the new view what it already showed")
         #expect(resumed.flashRequestCount == 0, "the same skill must not flash again")
 
         bar.tabs[0].activity = TabActivity(kind: .highlight, generation: 6)
-        try bar.settle { $0.views(TitleEffectView.self).first?.flashRequestCount == 1 }
-        #expect(bar.views(TitleEffectView.self).first?.flashRequestCount == 1, "a new skill flashes")
+        try bar.settle { $0.views(ActivityFlashView.self).first?.flashRequestCount == 1 }
+        #expect(bar.views(ActivityFlashView.self).first?.flashRequestCount == 1, "a new skill flashes")
+    }
+
+    @Test("The flash covers the whole tab, wherever the tab is in the bar")
+    func flashCoversTheWholeTab() throws {
+        let bar = try HostedBar(style: style, titles: ["claude", "Terminal session"], icon: "terminal.fill")
+        defer { bar.close() }
+        bar.tabs[1].activity = TabActivity(kind: .highlight, generation: 1)
+        try bar.settle { $0.views(ActivityFlashView.self).count == 1 }
+
+        let flash = try #require(bar.views(ActivityFlashView.self).first)
+        let flashFrame = flash.convert(flash.bounds, to: nil)
+        let tabFrame = try #require(bar.tabFramesInWindow().last)
+        #expect(abs(flashFrame.minX - tabFrame.minX) < 0.5, "left: \(flashFrame) vs \(tabFrame)")
+        #expect(abs(flashFrame.maxX - tabFrame.maxX) < 0.5, "right: \(flashFrame) vs \(tabFrame)")
+        #expect(abs(flashFrame.minY - tabFrame.minY) < 0.5, "bottom: \(flashFrame) vs \(tabFrame)")
+        #expect(abs(flashFrame.maxY - tabFrame.maxY) < 0.5, "top: \(flashFrame) vs \(tabFrame)")
+    }
+
+    @Test("The flash lies above the tab's fill and below its title")
+    func flashSitsBetweenTheFillAndTheTitle() throws {
+        // An opaque blue fill, an opaque green wash and a red title: a still highlight shows its stops, so the title is red.
+        let fill = SelectedTabStyle(
+            fillHex: "#0000FF",
+            inactiveWindowFillHex: "#0000FF",
+            unfocusedPaneFillHex: "#0000FF",
+            titleHex: "#FFFFFF",
+            unfocusedPaneTitleHex: "#FFFFFF",
+            indicatorHex: "#0000FF",
+            unfocusedPaneIndicatorHex: "#0000FF"
+        )
+        let probe = TitleEffectStyle(
+            workingBaseHex: "#FF0000",
+            workingHighlightHex: "#FF0000",
+            glyphWorkingHex: "#FF0000",
+            flashHex: "#00FF00",
+            highlightStopHexes: ["#FF0000", "#FF0000"]
+        )
+        let bar = try HostedBar(
+            style: probe,
+            titles: ["MMM"],
+            icon: "terminal.fill",
+            tabBarHeight: 40,
+            titleFontSize: 24,
+            selectedTabStyle: fill
+        )
+        defer { bar.close() }
+        bar.tabs[0].activity = TabActivity(kind: .highlight, generation: 1)
+        try bar.settle { $0.views(ActivityFlashView.self).count == 1 }
+        let between = try bar.snapshot().pixels(inTab: 0)
+        #expect(between.count(of: "green") == 0, "between flashes the wash draws nothing")
+        #expect(between.count(of: "blue") > 200, "the fill shows")
+
+        // Hold the wash at its peak, as a flash does halfway through.
+        let flash = try #require(bar.views(ActivityFlashView.self).first)
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        flash.flashLayer.opacity = 1
+        CATransaction.commit()
+        let peak = try bar.snapshot().pixels(inTab: 0)
+        #expect(peak.count(of: "green") > 200, "the wash covers the fill")
+        #expect(peak.count(of: "green") > 5 * peak.count(of: "blue"), "only the edge chrome stays blue: \(peak.count(of: "blue"))")
+        #expect(peak.count(of: "red") > 20, "the title stays on top of the wash")
     }
 
     @Test("The effect overlay does not take clicks away from the tab")
@@ -287,11 +358,12 @@ struct TabActivityTests {
         let bar = try HostedBar(style: style, titles: ["claude", "zsh"])
         defer { bar.close() }
         bar.tabs[0].activity = TabActivity(kind: .working)
-        try bar.settle { $0.views(TitleEffectView.self).count == 1 && $0.views(ActivityGlyphView.self).count == 1 }
+        try bar.settle { $0.effectViewCounts == [1, 1, 1] }
 
         var effects: [NSView] = bar.views(TitleEffectView.self)
         effects += bar.views(ActivityGlyphView.self) as [NSView]
-        #expect(effects.count == 2)
+        effects += bar.views(ActivityFlashView.self) as [NSView]
+        #expect(effects.count == 3)
         for effect in effects {
             let center = NSPoint(x: effect.bounds.midX, y: effect.bounds.midY)
             let hit = bar.hitTest(effect.convert(center, to: nil))
@@ -331,12 +403,12 @@ struct TabActivityTests {
         let bounds: CGRect
         let tabFrames: [CGRect]
 
-        /// Every pixel inside the tab at `index`, leaving out its first `leading` points.
-        func pixels(inTab index: Int, skippingLeading leading: CGFloat = 0) throws -> TabPixels {
+        /// Every pixel inside the tab at `index`, between `from` and `to` points from the tab's leading edge.
+        func pixels(inTab index: Int, from start: CGFloat = 0, to end: CGFloat? = nil) throws -> TabPixels {
             let tabFrame = try #require(tabFrames.indices.contains(index) ? tabFrames[index] : nil)
             var frame = tabFrame
-            frame.origin.x += leading
-            frame.size.width -= leading
+            frame.origin.x += start
+            frame.size.width = min(end ?? tabFrame.width, tabFrame.width) - start
             let scaleX = CGFloat(bitmap.pixelsWide) / bounds.width
             let scaleY = CGFloat(bitmap.pixelsHigh) / bounds.height
             var pixels: [(x: Int, y: Int, color: NSColor)] = []
@@ -372,6 +444,7 @@ struct TabActivityTests {
             tabBarHeight: CGFloat = 30,
             titleFontSize: CGFloat = 11,
             tabMaxWidth: CGFloat = 220,
+            selectedTabStyle: SelectedTabStyle? = nil,
             countsTabEvaluations: Bool = false
         ) throws {
             _ = NSApplication.shared
@@ -380,6 +453,7 @@ struct TabActivityTests {
                 tabMaxWidth: tabMaxWidth,
                 tabTitleFontSize: titleFontSize,
                 chromeColors: .init(backgroundHex: "#000000", tabBarBackgroundHex: "#000000", borderHex: "#00000000"),
+                selectedTabStyle: selectedTabStyle,
                 titleEffectStyle: style
             )
             controller = BonsplitController(configuration: BonsplitConfiguration(appearance: appearance))
@@ -413,6 +487,20 @@ struct TabActivityTests {
         /// Every view of `type` in the bar.
         func views<View: NSView>(_ type: View.Type) -> [View] {
             TabActivityTests.descendants(ofType: type, in: hostingView)
+        }
+
+        /// How many title effects, glyphs and flashes the bar holds, in that order.
+        var effectViewCounts: [Int] {
+            [views(TitleEffectView.self).count, views(ActivityGlyphView.self).count, views(ActivityFlashView.self).count]
+        }
+
+        /// Every tab's frame in window coordinates, in tab order.
+        func tabFramesInWindow() -> [CGRect] {
+            guard let chrome = TabActivityTests.descendants(
+                ofType: TabBarSelectionChromeView.ChromeNSView.self,
+                in: hostingView
+            ).first else { return [] }
+            return tabFrames().map { chrome.convert($0, to: nil) }
         }
 
         /// The view AppKit would deliver a click at `windowPoint` to.
@@ -476,6 +564,7 @@ struct TabActivityTests {
         switch (red > 0.75, green > 0.75, blue > 0.75) {
         case (true, false, false): return "red"
         case (false, true, false): return "green"
+        case (false, false, true): return "blue"
         default:
             let channels = [red, green, blue]
             let spread = (channels.max() ?? 0) - (channels.min() ?? 0)

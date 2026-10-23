@@ -37,11 +37,10 @@ struct TitleEffectViewTests {
         let host = TitleHost(environment: environment)
         defer { host.close() }
 
-        host.view.configure(text: title("Terminal"), maximumNumberOfLines: 1, kind: .working, generation: 0, style: style)
+        host.view.configure(text: title("Terminal"), maximumNumberOfLines: 1, kind: .working, style: style)
 
         let sweep = try #require(host.view.gradientLayer.animation(forKey: TitleEffectView.sweepAnimationKey))
         #expect(host.view.gradientLayer.animation(forKey: TitleEffectView.flowAnimationKey) == nil)
-        #expect(host.view.flashLayer.animation(forKey: TitleEffectView.flashAnimationKey) == nil)
         #expect(abs(sweep.duration - style.workingSweepDuration) < 0.001)
         #expect(sweep.repeatCount == .infinity)
         let start = try #require(Self.startPointTravel(of: sweep))
@@ -49,13 +48,13 @@ struct TitleEffectViewTests {
         #expect(!host.view.gradientLayer.isHidden)
     }
 
-    @Test("A highlighted title flows through its colors and flashes once per generation")
-    func highlightInstallsFlowAndFlashOnce() throws {
+    @Test("A highlighted title flows through its colors, left to right, once per cycle duration")
+    func highlightInstallsFlow() throws {
         let environment = FakeEnvironment()
         let host = TitleHost(environment: environment)
         defer { host.close() }
 
-        host.view.configure(text: title("Terminal"), maximumNumberOfLines: 1, kind: .highlight, generation: 1, style: style)
+        host.view.configure(text: title("Terminal"), maximumNumberOfLines: 1, kind: .highlight, style: style)
 
         let flow = try #require(host.view.gradientLayer.animation(forKey: TitleEffectView.flowAnimationKey))
         #expect(host.view.gradientLayer.animation(forKey: TitleEffectView.sweepAnimationKey) == nil)
@@ -63,20 +62,7 @@ struct TitleEffectViewTests {
         #expect(flow.repeatCount == .infinity)
         let start = try #require(Self.startPointTravel(of: flow))
         #expect(start.from < start.to, "the colors must flow left to right: \(start)")
-        let flash = try #require(host.view.flashLayer.animation(forKey: TitleEffectView.flashAnimationKey))
-        #expect(abs(flash.duration - (style.flashRiseDuration + style.flashFadeDuration)) < 0.001)
-        #expect(flash.repeatCount == 0, "the flash plays one beat")
-        #expect(host.view.flashCount == 1)
-
-        host.view.configure(text: title("Terminal"), maximumNumberOfLines: 1, kind: .highlight, generation: 1, style: style)
-        #expect(host.view.flashCount == 1, "the same generation must not flash again")
-
-        host.view.configure(text: title("Terminal"), maximumNumberOfLines: 1, kind: .working, generation: 0, style: style)
-        host.view.configure(text: title("Terminal"), maximumNumberOfLines: 1, kind: .highlight, generation: 1, style: style)
-        #expect(host.view.flashCount == 1, "returning to the same generation after working must not flash again")
-
-        host.view.configure(text: title("Terminal"), maximumNumberOfLines: 1, kind: .highlight, generation: 2, style: style)
-        #expect(host.view.flashCount == 2, "a new generation flashes again")
+        #expect(animationKeys(host.view.gradientLayer) == [TitleEffectView.flowAnimationKey], "the title has no flash of its own")
     }
 
     @Test("Switching between working and highlight swaps the sweep for the flow and back")
@@ -85,38 +71,37 @@ struct TitleEffectViewTests {
         let host = TitleHost(environment: environment)
         defer { host.close() }
 
-        host.view.configure(text: title("Terminal"), maximumNumberOfLines: 1, kind: .working, generation: 0, style: style)
-        host.view.configure(text: title("Terminal"), maximumNumberOfLines: 1, kind: .highlight, generation: 3, style: style)
+        host.view.configure(text: title("Terminal"), maximumNumberOfLines: 1, kind: .working, style: style)
+        host.view.configure(text: title("Terminal"), maximumNumberOfLines: 1, kind: .highlight, style: style)
         #expect(animationKeys(host.view.gradientLayer) == [TitleEffectView.flowAnimationKey])
 
-        host.view.configure(text: title("Terminal"), maximumNumberOfLines: 1, kind: .working, generation: 0, style: style)
+        host.view.configure(text: title("Terminal"), maximumNumberOfLines: 1, kind: .working, style: style)
         #expect(animationKeys(host.view.gradientLayer) == [TitleEffectView.sweepAnimationKey])
-        #expect(host.view.flashLayer.animation(forKey: TitleEffectView.flashAnimationKey) == nil)
     }
 
-    @Test("With Reduce Motion nothing moves: the title holds the base color or a still pastel gradient, and no flash")
+    @Test("With Reduce Motion nothing moves: a working title holds the running color, a highlighted one a still pastel gradient")
     func reduceMotionStopsAnimations() throws {
         let environment = FakeEnvironment()
         let host = TitleHost(environment: environment)
         defer { host.close() }
-        host.view.configure(text: title("Terminal"), maximumNumberOfLines: 1, kind: .working, generation: 0, style: style)
+        host.view.configure(text: title("Terminal"), maximumNumberOfLines: 1, kind: .working, style: style)
         #expect(host.view.gradientLayer.animation(forKey: TitleEffectView.sweepAnimationKey) != nil)
 
         environment.reducesMotion = true
         Self.announceDisplayOptionsChange()
 
         #expect(animationKeys(host.view.gradientLayer).isEmpty)
-        #expect(animationKeys(host.view.flashLayer).isEmpty)
         #expect(!host.view.gradientLayer.isHidden, "the title must still be drawn")
         #expect(host.view.textMaskLayer.contents != nil, "the mask still holds the text")
         #expect(try inkCount(of: host.view) > 20, "the mask has the title's glyphs")
         let workingColors = try #require(host.view.gradientLayer.colors as? [CGColor])
-        #expect(workingColors.allSatisfy { isClose($0, toHex: 0xB39550) }, "a still working title is the base color")
+        #expect(
+            workingColors.allSatisfy { isClose($0, toHex: 0xE8C468) },
+            "a still working title is the running color, the glyph's, not the base color"
+        )
 
-        host.view.configure(text: title("Terminal"), maximumNumberOfLines: 1, kind: .highlight, generation: 7, style: style)
+        host.view.configure(text: title("Terminal"), maximumNumberOfLines: 1, kind: .highlight, style: style)
         #expect(animationKeys(host.view.gradientLayer).isEmpty)
-        #expect(animationKeys(host.view.flashLayer).isEmpty, "Reduce Motion never flashes")
-        #expect(host.view.flashCount == 0)
         let highlightColors = try #require(host.view.gradientLayer.colors as? [CGColor])
         #expect(highlightColors.contains { isClose($0, toHex: 0xF4A7C0) })
         #expect(highlightColors.contains { isClose($0, toHex: 0x8FD9A8) }, "a still highlight keeps its pastel gradient")
@@ -124,55 +109,25 @@ struct TitleEffectViewTests {
         environment.reducesMotion = false
         Self.announceDisplayOptionsChange()
         #expect(host.view.gradientLayer.animation(forKey: TitleEffectView.flowAnimationKey) != nil, "motion comes back")
-        #expect(host.view.flashCount == 0, "a skipped flash does not play late")
     }
 
-    @Test("A title that cannot be seen pauses, and resumes when its window is visible again")
-    func hiddenViewPausesAnimations() {
+    @Test("A working title that cannot be seen holds the running color too, and sweeps again when it can")
+    func hiddenViewPausesAnimations() throws {
         let environment = FakeEnvironment()
         let host = TitleHost(environment: environment)
         defer { host.close() }
-        host.view.configure(text: title("Terminal"), maximumNumberOfLines: 1, kind: .working, generation: 0, style: style)
+        host.view.configure(text: title("Terminal"), maximumNumberOfLines: 1, kind: .working, style: style)
 
         environment.visible = false
         host.announceOcclusionChange()
         #expect(animationKeys(host.view.gradientLayer).isEmpty)
         #expect(!host.view.gradientLayer.isHidden, "a paused title is still drawn")
+        let stillColors = try #require(host.view.gradientLayer.colors as? [CGColor])
+        #expect(stillColors.allSatisfy { isClose($0, toHex: 0xE8C468) })
 
         environment.visible = true
         host.announceOcclusionChange()
         #expect(animationKeys(host.view.gradientLayer) == [TitleEffectView.sweepAnimationKey])
-    }
-
-    @Test("A highlight that starts while its title cannot be seen does not flash later")
-    func flashIsSkippedWhileNotVisible() {
-        let environment = FakeEnvironment()
-        environment.visible = false
-        let host = TitleHost(environment: environment)
-        defer { host.close() }
-
-        host.view.configure(text: title("Terminal"), maximumNumberOfLines: 1, kind: .highlight, generation: 4, style: style)
-        #expect(animationKeys(host.view.flashLayer).isEmpty)
-
-        environment.visible = true
-        host.announceOcclusionChange()
-        #expect(host.view.gradientLayer.animation(forKey: TitleEffectView.flowAnimationKey) != nil)
-        #expect(animationKeys(host.view.flashLayer).isEmpty, "the flash belongs to the start of the highlight")
-        #expect(host.view.flashCount == 0)
-    }
-
-    @Test("A view configured before it is on screen plays its flash once it lands in a window")
-    func flashWaitsForTheWindow() {
-        let environment = FakeEnvironment()
-        let view = TitleEffectView(environment: environment)
-        view.frame = NSRect(x: 0, y: 0, width: 160, height: 16)
-        view.configure(text: title("Terminal"), maximumNumberOfLines: 1, kind: .highlight, generation: 1, style: style)
-        #expect(view.flashCount == 0, "nothing plays off screen")
-
-        let host = TitleHost(environment: environment, view: view)
-        defer { host.close() }
-        #expect(view.flashCount == 1)
-        #expect(view.flashLayer.animation(forKey: TitleEffectView.flashAnimationKey) != nil)
     }
 
     @Test("An inactive presentation pauses the effect")
@@ -180,11 +135,10 @@ struct TitleEffectViewTests {
         let environment = FakeEnvironment()
         let host = TitleHost(environment: environment)
         defer { host.close() }
-        host.view.configure(text: title("Terminal"), maximumNumberOfLines: 1, kind: .highlight, generation: 1, style: style)
+        host.view.configure(text: title("Terminal"), maximumNumberOfLines: 1, kind: .highlight, style: style)
 
         host.view.isPresentationActive = false
         #expect(animationKeys(host.view.gradientLayer).isEmpty)
-        #expect(animationKeys(host.view.flashLayer).isEmpty)
 
         host.view.isPresentationActive = true
         #expect(animationKeys(host.view.gradientLayer) == [TitleEffectView.flowAnimationKey])
@@ -195,14 +149,163 @@ struct TitleEffectViewTests {
         let environment = FakeEnvironment()
         let host = TitleHost(environment: environment)
         defer { host.close() }
-        host.view.configure(text: title("Terminal"), maximumNumberOfLines: 1, kind: .highlight, generation: 1, style: style)
+        host.view.configure(text: title("Terminal"), maximumNumberOfLines: 1, kind: .highlight, style: style)
 
-        host.view.configure(text: title("Terminal"), maximumNumberOfLines: 1, kind: nil, generation: 0, style: style)
+        host.view.configure(text: title("Terminal"), maximumNumberOfLines: 1, kind: nil, style: style)
 
         #expect(host.view.gradientLayer.isHidden)
-        #expect(host.view.flashLayer.isHidden)
         #expect(animationKeys(host.view.gradientLayer).isEmpty)
+    }
+
+    // MARK: - Activity flash
+
+    @Test("A new highlight generation washes the whole view once in the flash color: a rise, then a fade")
+    func flashPlaysOncePerGeneration() throws {
+        let environment = FakeEnvironment()
+        let host = FlashHost(environment: environment)
+        defer { host.close() }
+
+        host.view.configure(kind: .highlight, generation: 1, style: style)
+
+        let flash = try #require(
+            host.view.flashLayer.animation(forKey: ActivityFlashView.flashAnimationKey) as? CAKeyframeAnimation
+        )
+        let total = style.flashRiseDuration + style.flashFadeDuration
+        #expect(flash.keyPath == "opacity")
+        #expect(flash.values?.compactMap { ($0 as? NSNumber)?.doubleValue } == [0, 1, 0])
+        #expect(abs((flash.keyTimes?[1].doubleValue ?? 0) - style.flashRiseDuration / total) < 0.001, "the peak comes after the rise")
+        #expect(abs(flash.duration - total) < 0.001)
+        #expect(flash.repeatCount == 0, "the flash plays one beat")
+        #expect(host.view.flashLayer.frame == host.view.bounds, "the wash covers the whole view")
+        #expect(host.view.flashLayer.opacity == 0, "between flashes the view draws nothing")
+        let color = try #require(host.view.flashLayer.backgroundColor)
+        #expect(isClose(color, toHex: 0xD6C4FF))
+        #expect(abs(color.alpha - CGFloat(0x42) / 255) < 0.01, "the flash color keeps its own alpha")
+        #expect(host.view.flashCount == 1)
+        #expect(host.view.flashedGeneration == 1)
+
+        host.view.configure(kind: .highlight, generation: 1, style: style)
+        #expect(host.view.flashCount == 1, "the same generation must not flash again")
+
+        host.view.configure(kind: .working, generation: 0, style: style)
+        host.view.configure(kind: nil, generation: 0, style: style)
+        host.view.configure(kind: .highlight, generation: 1, style: style)
+        #expect(host.view.flashCount == 1, "returning to the same generation after working or a pause must not flash again")
+
+        host.view.configure(kind: .highlight, generation: 2, style: style)
+        #expect(host.view.flashCount == 2, "a new generation flashes again")
+    }
+
+    @Test("Working or no activity never flashes")
+    func onlyHighlightsFlash() {
+        let environment = FakeEnvironment()
+        let host = FlashHost(environment: environment)
+        defer { host.close() }
+
+        host.view.configure(kind: .working, generation: 5, style: style)
+        host.view.configure(kind: nil, generation: 6, style: style)
+
         #expect(animationKeys(host.view.flashLayer).isEmpty)
+        #expect(host.view.flashRequestCount == 0)
+        #expect(host.view.flashedGeneration == nil)
+    }
+
+    @Test("A host that sets the flashed generation before configuring does not get that generation's flash")
+    func seededGenerationDoesNotFlash() {
+        let environment = FakeEnvironment()
+        let host = FlashHost(environment: environment)
+        defer { host.close() }
+
+        host.view.flashedGeneration = 3
+        host.view.configure(kind: .highlight, generation: 3, style: style)
+        #expect(animationKeys(host.view.flashLayer).isEmpty)
+        #expect(host.view.flashRequestCount == 0)
+
+        host.view.configure(kind: .highlight, generation: 4, style: style)
+        #expect(host.view.flashCount == 1, "the next generation flashes")
+        #expect(host.view.flashedGeneration == 4)
+    }
+
+    @Test("Reduce Motion never flashes, not even once motion comes back")
+    func reduceMotionNeverFlashes() {
+        let environment = FakeEnvironment()
+        environment.reducesMotion = true
+        let host = FlashHost(environment: environment)
+        defer { host.close() }
+
+        host.view.configure(kind: .highlight, generation: 7, style: style)
+        #expect(animationKeys(host.view.flashLayer).isEmpty)
+        #expect(host.view.flashRequestCount == 1, "the generation is still taken")
+
+        environment.reducesMotion = false
+        Self.announceDisplayOptionsChange()
+        #expect(animationKeys(host.view.flashLayer).isEmpty, "a skipped flash does not play late")
+        #expect(host.view.flashCount == 0)
+    }
+
+    @Test("A highlight that starts while the view cannot be seen does not flash later")
+    func flashIsSkippedWhileNotVisible() {
+        let environment = FakeEnvironment()
+        environment.visible = false
+        let host = FlashHost(environment: environment)
+        defer { host.close() }
+
+        host.view.configure(kind: .highlight, generation: 4, style: style)
+        #expect(animationKeys(host.view.flashLayer).isEmpty)
+
+        environment.visible = true
+        host.announceOcclusionChange()
+        #expect(animationKeys(host.view.flashLayer).isEmpty, "the flash belongs to the start of the highlight")
+        #expect(host.view.flashCount == 0)
+    }
+
+    @Test("A playing flash stops when the view can no longer be seen or is no longer presented")
+    func playingFlashStops() {
+        let environment = FakeEnvironment()
+        let host = FlashHost(environment: environment)
+        defer { host.close() }
+
+        host.view.configure(kind: .highlight, generation: 1, style: style)
+        #expect(animationKeys(host.view.flashLayer) == [ActivityFlashView.flashAnimationKey])
+        environment.visible = false
+        host.announceOcclusionChange()
+        #expect(animationKeys(host.view.flashLayer).isEmpty)
+
+        environment.visible = true
+        host.announceOcclusionChange()
+        host.view.configure(kind: .highlight, generation: 2, style: style)
+        #expect(animationKeys(host.view.flashLayer) == [ActivityFlashView.flashAnimationKey])
+        host.view.isPresentationActive = false
+        #expect(animationKeys(host.view.flashLayer).isEmpty)
+
+        host.view.configure(kind: .highlight, generation: 3, style: style)
+        host.view.isPresentationActive = true
+        #expect(animationKeys(host.view.flashLayer).isEmpty, "an inactive view skips its flash for good")
+        #expect(host.view.flashCount == 2)
+    }
+
+    @Test("A view configured before it is on screen plays its flash once it lands in a window")
+    func flashWaitsForTheWindow() {
+        let environment = FakeEnvironment()
+        let view = ActivityFlashView(environment: environment)
+        view.frame = NSRect(x: 0, y: 0, width: 160, height: 30)
+        view.configure(kind: .highlight, generation: 1, style: style)
+        #expect(view.flashCount == 0, "nothing plays off screen")
+
+        let host = FlashHost(environment: environment, view: view)
+        defer { host.close() }
+        #expect(view.flashCount == 1)
+        #expect(view.flashLayer.animation(forKey: ActivityFlashView.flashAnimationKey) != nil)
+    }
+
+    @Test("The wash follows the corner radius a host gives it")
+    func flashFollowsTheCornerRadius() {
+        let host = FlashHost(environment: FakeEnvironment())
+        defer { host.close() }
+        #expect(host.view.flashLayer.cornerRadius == 0, "square like a tab by default")
+
+        host.view.cornerRadius = 7
+        #expect(host.view.flashLayer.cornerRadius == 7)
     }
 
     // MARK: - Title effect: the text mask
@@ -213,28 +316,27 @@ struct TitleEffectViewTests {
         let host = TitleHost(environment: environment)
         defer { host.close() }
 
-        host.view.configure(text: title("Terminal"), maximumNumberOfLines: 1, kind: .working, generation: 0, style: style)
+        host.view.configure(text: title("Terminal"), maximumNumberOfLines: 1, kind: .working, style: style)
         #expect(host.view.maskRenderCount == 1)
 
-        host.view.configure(text: title("Terminal"), maximumNumberOfLines: 1, kind: .highlight, generation: 9, style: style)
+        host.view.configure(text: title("Terminal"), maximumNumberOfLines: 1, kind: .highlight, style: style)
         host.view.isPresentationActive = false
         host.view.isPresentationActive = true
         host.view.layoutSubtreeIfNeeded()
-        #expect(host.view.maskRenderCount == 1, "kind, generation, presentation and layout passes reuse the mask")
+        #expect(host.view.maskRenderCount == 1, "kind, presentation and layout passes reuse the mask")
 
-        host.view.configure(text: title("Terminal 2"), maximumNumberOfLines: 1, kind: .highlight, generation: 9, style: style)
+        host.view.configure(text: title("Terminal 2"), maximumNumberOfLines: 1, kind: .highlight, style: style)
         #expect(host.view.maskRenderCount == 2, "new text")
 
         host.view.configure(
             text: title("Terminal 2", weight: .semibold),
             maximumNumberOfLines: 1,
             kind: .highlight,
-            generation: 9,
             style: style
         )
         #expect(host.view.maskRenderCount == 3, "new font")
 
-        host.view.configure(text: title("Terminal 2", weight: .semibold), maximumNumberOfLines: 2, kind: .highlight, generation: 9, style: style)
+        host.view.configure(text: title("Terminal 2", weight: .semibold), maximumNumberOfLines: 2, kind: .highlight, style: style)
         #expect(host.view.maskRenderCount == 4, "new line limit")
 
         host.view.setFrameSize(NSSize(width: 200, height: 16))
@@ -254,7 +356,7 @@ struct TitleEffectViewTests {
 
         var inkRows: [Int: ClosedRange<CGFloat>] = [:]
         for limit in [1, 2, 0] {
-            view.configure(text: title(long, size: 12), maximumNumberOfLines: limit, kind: .working, generation: 0, style: style)
+            view.configure(text: title(long, size: 12), maximumNumberOfLines: limit, kind: .working, style: style)
             let rows = try #require(try inkRowRange(of: view), "limit \(limit) drew no ink")
             inkRows[limit] = rows
         }
@@ -279,11 +381,10 @@ struct TitleEffectViewTests {
             text: title("Terminal session that is far too long"),
             maximumNumberOfLines: 1,
             kind: .working,
-            generation: 0,
             style: style
         )
         let truncated = try #require(try inkColumnRange(of: view))
-        view.configure(text: title("Term"), maximumNumberOfLines: 1, kind: .working, generation: 0, style: style)
+        view.configure(text: title("Term"), maximumNumberOfLines: 1, kind: .working, style: style)
         let short = try #require(try inkColumnRange(of: view))
 
         #expect(truncated.upperBound <= 80, "the ink stays inside the view: \(truncated)")
@@ -473,6 +574,33 @@ struct TitleEffectViewTests {
         init(environment: any TitleEffectEnvironment) {
             view = ActivityGlyphView(environment: environment)
             view.frame = NSRect(x: 0, y: 0, width: 20, height: 20)
+            window = TitleEffectViewTests.makeWindow()
+            window.contentView?.addSubview(view)
+            view.layoutSubtreeIfNeeded()
+        }
+
+        func announceOcclusionChange() {
+            NotificationCenter.default.post(name: NSWindow.didChangeOcclusionStateNotification, object: window)
+        }
+
+        func close() {
+            window.orderOut(nil)
+        }
+    }
+
+    /// An activity flash view in a window.
+    @MainActor
+    private struct FlashHost {
+        let view: ActivityFlashView
+        let window: NSWindow
+
+        init(environment: any TitleEffectEnvironment, view: ActivityFlashView? = nil) {
+            let view = view ?? {
+                let created = ActivityFlashView(environment: environment)
+                created.frame = NSRect(x: 0, y: 0, width: 160, height: 30)
+                return created
+            }()
+            self.view = view
             window = TitleEffectViewTests.makeWindow()
             window.contentView?.addSubview(view)
             view.layoutSubtreeIfNeeded()

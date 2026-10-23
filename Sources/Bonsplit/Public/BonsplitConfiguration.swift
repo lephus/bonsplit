@@ -628,10 +628,11 @@ extension BonsplitConfiguration {
         /// system-accent indicator on the top edge.
         public var selectedTabStyle: SelectedTabStyle?
 
-        /// Optional colors and timing for the agent activity effects on tab titles.
-        /// When nil, no tab draws a title effect or an activity glyph, whatever its ``Tab/activity``. When set,
-        /// a tab with an activity draws its title through a ``TitleEffectView`` and shows an
-        /// ``ActivityGlyphView`` in place of its icon.
+        /// Optional colors and timing for the agent activity effects on tabs.
+        /// When nil, no tab draws a title effect, an activity glyph or a flash, whatever its ``Tab/activity``.
+        /// When set, a tab with an activity draws its title through a ``TitleEffectView``, shows an
+        /// ``ActivityGlyphView`` in place of its icon, and flashes once through an ``ActivityFlashView``
+        /// when a skill or workflow starts.
         public var titleEffectStyle: TitleEffectStyle?
 
         // MARK: - Presets

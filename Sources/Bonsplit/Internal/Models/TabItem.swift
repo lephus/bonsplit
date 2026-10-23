@@ -44,12 +44,12 @@ final class TabItem: Identifiable, Hashable, Codable {
     var isPinned: Bool
     var showsRemoteIndicator: Bool
     var presence: TabPresence?
-    /// What a coding agent is doing in this tab; drives the title effect and the activity glyph.
+    /// What a coding agent is doing in this tab; drives the title effect, the activity glyph and the flash.
     /// Runtime state: never encoded.
     var activity: TabActivity?
-    /// The highlight generation whose flash this tab's title already played or skipped.
+    /// The highlight generation whose flash this tab already played or skipped.
     ///
-    /// Kept on the tab rather than on the effect view, so a title effect that SwiftUI builds again
+    /// Kept on the tab rather than on the flash view, so a flash view that SwiftUI builds again
     /// (after the activity paused, or when the tab moved to another pane) does not flash again for
     /// the same skill or workflow. Not observed, never encoded.
     @ObservationIgnored var flashedActivityGeneration: UInt64?

@@ -18,7 +18,7 @@ public struct TabActivity: Sendable, Equatable, Hashable {
     public enum Kind: Sendable, Equatable, Hashable {
         /// The agent is working: a highlight sweeps across the title.
         case working
-        /// The agent runs a skill or a workflow: the title flashes once, then flows through pastel colors.
+        /// The agent runs a skill or a workflow: the whole tab flashes once and the title flows through pastel colors.
         case highlight
     }
 
@@ -27,7 +27,7 @@ public struct TabActivity: Sendable, Equatable, Hashable {
 
     /// A counter the host raises each time a new skill or workflow starts.
     ///
-    /// While the activity is ``Kind/highlight``, a generation the title has not shown yet plays the
+    /// While the activity is ``Kind/highlight``, a generation the tab has not shown yet plays the
     /// one-time flash. The same generation shown again, even after the effect paused, does not.
     /// ``Kind/working`` ignores it.
     public var generation: UInt64

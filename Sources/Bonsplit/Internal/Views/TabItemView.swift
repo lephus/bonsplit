@@ -403,6 +403,15 @@ struct TabItemView: View {
         // titles). Fill mode keeps the flexible behavior so tabs share the strip.
         // Icon-only pinned tabs always size to their fixed compact width.
         .fixedSize(horizontal: isIconOnlyPinned || !fillsWidth, vertical: false)
+        // The flash when a skill or workflow starts covers the whole tab: above its fill, which is
+        // the next background, and below its icon and title.
+        .background {
+            if let activity = drawnActivity {
+                TabActivityFlash(tab: tab, activity: activity.activity, style: activity.style)
+                    .allowsHitTesting(false)
+                    .accessibilityHidden(true)
+            }
+        }
         .background(tabBackground.saturation(paintSaturation))
         .background(TabPopoverAnchorView(tabId: tab.id, kind: .tabItem))
         // The hint crossfade is animated where it happens (`trailingAccessory`,
@@ -818,13 +827,12 @@ struct TabItemView: View {
             .overlay(alignment: .topLeading) {
                 if let activity {
                     TabTitleEffect(
-                        tab: tab,
                         title: tab.title,
                         font: NSFont.systemFont(
                             ofSize: appearance.tabTitleFontSize,
                             weight: titleWeight == .semibold ? .semibold : .regular
                         ),
-                        activity: activity.activity,
+                        kind: activity.activity.kind,
                         style: activity.style
                     )
                     .allowsHitTesting(false)
