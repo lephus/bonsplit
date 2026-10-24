@@ -4,8 +4,10 @@ import SwiftUI
 /// The one-time wash over a whole tab when its agent starts a skill or a workflow: an ``ActivityFlashView``.
 ///
 /// The tab remembers which generation it already flashed for, so a flash view that SwiftUI builds
-/// again (after the activity paused, or when the tab moved to another pane) does not flash again
-/// for the same skill or workflow.
+/// again (after the activity paused, or when the tab moved to another pane of the same controller)
+/// does not flash again for the same skill or workflow. The memory lives on this `TabItem` only, so a
+/// tab the host rebuilds (dropped into another workspace or window) may flash again, and a bar first
+/// mounted after the generation started may flash late.
 struct TabActivityFlash: NSViewRepresentable {
     let tab: TabItem
     let activity: TabActivity

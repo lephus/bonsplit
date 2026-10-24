@@ -233,28 +233,51 @@ struct TabActivityTests {
             flashHex: "#00000000",
             highlightStopHexes: ["#FFFFFF", "#FFFFFF"]
         )
-        let titles = ["One", "Terminal session that is far too long to fit"]
+        // The selected tab is the first one. With a selected tab style it draws semibold over a hidden
+        // bold-reserved copy, so the styled case selects the long, truncated title.
+        let accent = SelectedTabStyle(
+            fillHex: "#00000000",
+            inactiveWindowFillHex: "#00000000",
+            unfocusedPaneFillHex: "#00000000",
+            titleHex: "#FFFFFF",
+            unfocusedPaneTitleHex: "#FFFFFF",
+            indicatorHex: "#00000000",
+            unfocusedPaneIndicatorHex: "#00000000"
+        )
+        let longTitle = "Terminal session that is far too long to fit"
+        let cases: [(name: String, selectedTabStyle: SelectedTabStyle?, titles: [String])] = [
+            ("plain", nil, ["One", longTitle]),
+            ("styled", accent, [longTitle, "One"])
+        ]
         // Past the icon slot, where the icon or the glyph draws, only the title draws, and the selected
         // tab's close button, which neither run changes.
         let titleStart = TabBarMetrics.tabHorizontalPadding + TabBarMetrics.iconSize + TabBarMetrics.contentSpacing / 2
-        for (index, title) in titles.enumerated() {
-            let plain = try HostedBar(style: white, titles: titles, icon: "terminal.fill", tabMaxWidth: 160)
-            defer { plain.close() }
-            try plain.settle()
-            let plainInk = try plain.snapshot().pixels(inTab: index, from: titleStart).inkBox()
+        for testCase in cases {
+            let titles = testCase.titles
+            for (index, title) in titles.enumerated() {
+                let label = "\(testCase.name) \(title)"
+                let plain = try HostedBar(
+                    style: white, titles: titles, icon: "terminal.fill", tabMaxWidth: 160, selectedTabStyle: testCase.selectedTabStyle
+                )
+                defer { plain.close() }
+                try plain.settle()
+                let plainInk = try plain.snapshot().pixels(inTab: index, from: titleStart).inkBox()
 
-            let bar = try HostedBar(style: white, titles: titles, icon: "terminal.fill", tabMaxWidth: 160)
-            defer { bar.close() }
-            bar.tabs[index].activity = TabActivity(kind: .working)
-            try bar.settle { $0.views(TitleEffectView.self).count == 1 }
-            let effectInk = try bar.snapshot().pixels(inTab: index, from: titleStart).inkBox()
+                let bar = try HostedBar(
+                    style: white, titles: titles, icon: "terminal.fill", tabMaxWidth: 160, selectedTabStyle: testCase.selectedTabStyle
+                )
+                defer { bar.close() }
+                bar.tabs[index].activity = TabActivity(kind: .working)
+                try bar.settle { $0.views(TitleEffectView.self).count == 1 }
+                let effectInk = try bar.snapshot().pixels(inTab: index, from: titleStart).inkBox()
 
-            let plainBox = try #require(plainInk, "\(title): no title ink")
-            let effectBox = try #require(effectInk, "\(title): no effect ink")
-            #expect(abs(plainBox.minX - effectBox.minX) <= 1, "\(title): left \(plainBox) vs \(effectBox)")
-            #expect(abs(plainBox.maxX - effectBox.maxX) <= 1, "\(title): right \(plainBox) vs \(effectBox)")
-            #expect(abs(plainBox.minY - effectBox.minY) <= 1, "\(title): top \(plainBox) vs \(effectBox)")
-            #expect(abs(plainBox.maxY - effectBox.maxY) <= 1, "\(title): bottom \(plainBox) vs \(effectBox)")
+                let plainBox = try #require(plainInk, "\(label): no title ink")
+                let effectBox = try #require(effectInk, "\(label): no effect ink")
+                #expect(abs(plainBox.minX - effectBox.minX) <= 1, "\(label): left \(plainBox) vs \(effectBox)")
+                #expect(abs(plainBox.maxX - effectBox.maxX) <= 1, "\(label): right \(plainBox) vs \(effectBox)")
+                #expect(abs(plainBox.minY - effectBox.minY) <= 1, "\(label): top \(plainBox) vs \(effectBox)")
+                #expect(abs(plainBox.maxY - effectBox.maxY) <= 1, "\(label): bottom \(plainBox) vs \(effectBox)")
+            }
         }
     }
 

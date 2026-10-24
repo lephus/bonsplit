@@ -43,6 +43,13 @@ struct SelectedTabStyleTests {
         #expect(paint.titleWeight == .semibold)
     }
 
+    @Test("A window dims only when it is neither key nor main in the active app, like the session row")
+    func windowDimsLikeTheSessionRow() {
+        #expect(TabBarWindowKeyProbe.paintsAsKey(.key))
+        #expect(TabBarWindowKeyProbe.paintsAsKey(.active), "main but not key (a sheet or panel is key) stays bright")
+        #expect(!TabBarWindowKeyProbe.paintsAsKey(.inactive))
+    }
+
     @Test("An unfocused pane gets the neutral paint whether or not its window is key")
     func unfocusedPaneUsesNeutralPaint() {
         for isWindowKey in [true, false] {

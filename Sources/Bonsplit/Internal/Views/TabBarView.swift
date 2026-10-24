@@ -908,7 +908,7 @@ struct TabBarView: View {
     @State private var splitButtonViewportWidth: CGFloat = 0
     @State private var controlKeyMonitor = TabControlShortcutKeyMonitor()
     @State private var tabItemGeometryRegistry = TabBarItemGeometryRegistry()
-    /// Whether the window is key, as `TabBarWindowKeyProbe` last reported it. Only the probe writes it,
+    /// Whether the window is key or main in the active app, as `TabBarWindowKeyProbe` last reported it. Only the probe writes it,
     /// and only while the host has a selected tab style. It starts true: most bars appear in a key window,
     /// and the probe corrects it as soon as it appears.
     @State private var windowKeyState = true
