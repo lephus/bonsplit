@@ -25,7 +25,7 @@ public struct TabActivity: Sendable, Equatable, Hashable {
     /// The kind of work, which picks the effect.
     public var kind: Kind
 
-    /// A counter the host raises each time a new skill or workflow starts.
+    /// A counter the host raises each time a new skill or workflow starts. ``Kind/working`` ignores it.
     ///
     /// While the activity is ``Kind/highlight``, a generation the tab has not shown yet plays the
     /// one-time flash. The same generation shown again, even after the effect paused, does not.
@@ -33,7 +33,6 @@ public struct TabActivity: Sendable, Equatable, Hashable {
     /// The flash plays once per generation per tab instance. A tab the host rebuilds, for example one
     /// dropped into another workspace or window through `onExternalTabDrop`, has no memory of it and
     /// may flash again. A bar first mounted after the generation started may flash late.
-    /// ``Kind/working`` ignores it.
     public var generation: UInt64
 
     /// Words VoiceOver adds after the tab's title while the effect is drawn, such as "Thinking…".

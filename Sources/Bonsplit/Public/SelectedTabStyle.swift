@@ -10,10 +10,10 @@ import CoreGraphics
 /// The tab bar does not desaturate a styled selected tab, so the colors themselves carry the
 /// focus state: the focused pane uses the accent colors and every other pane the unfocused ones.
 public struct SelectedTabStyle: Sendable, Equatable {
-    /// Hex fill of the selected tab in the focused pane while its window is key.
+    /// Hex fill of the selected tab in the focused pane while its window is key or main in the active app.
     public var fillHex: String
 
-    /// Hex fill of the selected tab in the focused pane while its window is not key.
+    /// Hex fill of the selected tab in the focused pane while the app is inactive.
     public var inactiveWindowFillHex: String
 
     /// Hex fill of the selected tab in a pane that does not have focus.

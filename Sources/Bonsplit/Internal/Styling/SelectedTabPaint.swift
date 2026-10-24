@@ -17,7 +17,7 @@ struct SelectedTabPaint {
 
     /// Resolves the paint for a pane's focus and its window's key state.
     ///
-    /// The focused pane uses the accent colors, with a softer fill while its window is not key.
+    /// The focused pane uses the accent colors, with a softer fill while the app is inactive (bright while its window is key or main in the active app).
     /// Any other pane uses the unfocused colors whatever its window is doing. A color that is not
     /// valid hex falls back to no fill, the label color or the system accent color.
     init(style: SelectedTabStyle, isPaneFocused: Bool, isWindowKey: Bool) {

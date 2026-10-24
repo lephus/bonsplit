@@ -932,7 +932,7 @@ struct TabBarView: View {
         controller.configuration.appearance
     }
 
-    /// Whether the window is key, for the selected tab's paint. False without a selected tab style,
+    /// Whether the window is key or main in the active app (not merely key), for the selected tab's paint. False without a selected tab style,
     /// because such a bar has no probe to keep `windowKeyState` current.
     private var isWindowKey: Bool {
         appearance.selectedTabStyle != nil && windowKeyState
@@ -1333,7 +1333,7 @@ struct TabBarView: View {
             }
         }
         .background {
-            // Only a bar with a selected tab style paints differently in a window that is not key. SwiftUI
+            // Only a bar with a selected tab style paints differently when the app is inactive. SwiftUI
             // ties an `@Environment` dependency to its declaration, not to where it is read, so the probe
             // that declares it exists for styled bars alone: a bar without a style has no dependency on
             // the window state anywhere in its tree. The probe sits in the background so that setting or
