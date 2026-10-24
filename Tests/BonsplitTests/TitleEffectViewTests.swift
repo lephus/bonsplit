@@ -157,6 +157,42 @@ struct TitleEffectViewTests {
         #expect(animationKeys(host.view.gradientLayer).isEmpty)
     }
 
+    @Test("A short highlighted title shows every color across its text at once, moving or still; a long one keeps a loop of two widths")
+    func highlightLoopFitsShortTitles() throws {
+        let environment = FakeEnvironment()
+        let short = TitleHost(environment: environment)
+        defer { short.close() }
+        let shortTitle = title("claude")
+        let textWidth = shortTitle.size().width
+        short.view.configure(text: shortTitle, maximumNumberOfLines: 1, kind: .highlight, style: style)
+
+        #expect(short.view.gradientLayer.startPoint.x == 0, "the loop starts at the text's leading edge")
+        #expect(abs(loopLength(of: short.view) - textWidth) < 1, "one loop spans the text: \(loopLength(of: short.view)) vs \(textWidth)")
+        let flow = try #require(short.view.gradientLayer.animation(forKey: TitleEffectView.flowAnimationKey))
+        let travel = try #require(Self.startPointTravel(of: flow))
+        #expect(abs((travel.to - travel.from) * short.view.bounds.width - textWidth) < 1, "the flow slides one loop: \(travel)")
+
+        environment.reducesMotion = true
+        Self.announceDisplayOptionsChange()
+        #expect(animationKeys(short.view.gradientLayer).isEmpty)
+        #expect(abs(loopLength(of: short.view) - textWidth) < 1, "the still band follows the same loop")
+
+        let longView = TitleEffectView(environment: FakeEnvironment())
+        longView.frame = NSRect(x: 0, y: 0, width: 240, height: 16)
+        let long = TitleHost(environment: FakeEnvironment(), view: longView)
+        defer { long.close() }
+        long.view.configure(
+            text: title("Terminal session that is far too long to fit in this tab"),
+            maximumNumberOfLines: 1,
+            kind: .highlight,
+            style: style
+        )
+        #expect(abs(loopLength(of: long.view) - 2 * 240) < 0.5, "a long title keeps a loop of two widths: \(loopLength(of: long.view))")
+        let longFlow = try #require(long.view.gradientLayer.animation(forKey: TitleEffectView.flowAnimationKey))
+        let longTravel = try #require(Self.startPointTravel(of: longFlow))
+        #expect(abs((longTravel.to - longTravel.from) - 2) < 0.001, "the flow slides two widths: \(longTravel)")
+    }
+
     // MARK: - Activity flash
 
     @Test("A new highlight generation washes the whole view once in the flash color: a rise, then a fade")
@@ -679,6 +715,12 @@ struct TitleEffectViewTests {
 
     private func animationKeys(_ layer: CALayer) -> [String] {
         layer.animationKeys() ?? []
+    }
+
+    /// One highlight loop's length in points: the gradient holds the loop twice between its start
+    /// and end points, which are in units of the view's width.
+    private func loopLength(of view: TitleEffectView) -> CGFloat {
+        (view.gradientLayer.endPoint.x - view.gradientLayer.startPoint.x) * view.bounds.width / 2
     }
 
     /// The mask image's opaque pixels, read from the bitmap.

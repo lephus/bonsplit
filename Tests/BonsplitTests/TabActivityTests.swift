@@ -428,6 +428,112 @@ struct TabActivityTests {
         #expect(bar.effectAnimationKeys().isEmpty)
     }
 
+    @Test("A skill that starts while the bar is not presented never flashes, not even when the bar is built again and presented")
+    func flashDroppedWhileNotPresentedStaysDropped() throws {
+        let environment = TitleEffectViewTests.FakeEnvironment()
+        let bar = try HostedBar(style: style, titles: ["claude", "zsh"], environment: environment)
+        defer { bar.close() }
+        bar.controller.updateTab(bar.tabID(0), activity: .some(TabActivity(kind: .working)))
+        try bar.settle { $0.views(ActivityFlashView.self).count == 1 }
+
+        // The user leaves the workspace: the host stops presenting the bar, then unmounts it.
+        bar.controller.isPresentationActive = false
+        bar.tearDown()
+        bar.pump()
+        bar.controller.updateTab(bar.tabID(0), activity: .some(TabActivity(kind: .highlight, generation: 2)))
+        bar.pump()
+
+        // The user comes back.
+        bar.controller.isPresentationActive = true
+        bar.rebuild()
+        try bar.settle { $0.views(ActivityFlashView.self).count == 1 }
+        let flash = try #require(bar.views(ActivityFlashView.self).first)
+        #expect(flash.flashCount == 0, "the skill started while the bar was away: its flash must not play late")
+        #expect(flash.flashRequestCount == 0, "the generation was already taken as shown")
+        #expect(flash.flashLayer.animation(forKey: ActivityFlashView.flashAnimationKey) == nil)
+
+        // The next skill, on screen, still flashes.
+        bar.controller.updateTab(bar.tabID(0), activity: .some(TabActivity(kind: .highlight, generation: 3)))
+        try bar.settle { _ in flash.flashCount == 1 }
+        #expect(flash.flashCount == 1)
+    }
+
+    @Test("A skill that starts while the bar is out of its window never flashes when the bar comes back")
+    func flashDroppedWhileOffScreenStaysDropped() throws {
+        let environment = TitleEffectViewTests.FakeEnvironment()
+        let bar = try HostedBar(style: style, titles: ["claude", "zsh"], environment: environment)
+        defer { bar.close() }
+        bar.controller.updateTab(bar.tabID(0), activity: .some(TabActivity(kind: .working)))
+        try bar.settle { $0.views(ActivityFlashView.self).count == 1 }
+
+        // The host takes the bar out of the window but keeps presenting it.
+        bar.removeFromWindow()
+        bar.pump()
+        bar.controller.updateTab(bar.tabID(0), activity: .some(TabActivity(kind: .highlight, generation: 5)))
+        bar.pump()
+
+        bar.addToWindow()
+        try bar.settle { $0.views(ActivityFlashView.self).count == 1 }
+        let flashes = bar.views(ActivityFlashView.self)
+        #expect(flashes.allSatisfy { $0.flashCount == 0 }, "the skill started while the tab was off screen: no late flash")
+        #expect(bar.effectAnimationKeys().allSatisfy { $0 != ActivityFlashView.flashAnimationKey })
+    }
+
+    @Test("A skill that starts while its tab is on screen and presented flashes once, from working or from idle")
+    func flashPlaysOnceWhenPresented() throws {
+        let environment = TitleEffectViewTests.FakeEnvironment()
+        let bar = try HostedBar(style: style, titles: ["claude", "zsh"], environment: environment)
+        defer { bar.close() }
+        bar.controller.updateTab(bar.tabID(0), activity: .some(TabActivity(kind: .working)))
+        try bar.settle { $0.views(ActivityFlashView.self).count == 1 }
+        let working = try #require(bar.views(ActivityFlashView.self).first)
+
+        bar.controller.updateTab(bar.tabID(0), activity: .some(TabActivity(kind: .highlight, generation: 1)))
+        try bar.settle { _ in working.flashCount == 1 }
+        #expect(working.flashLayer.animation(forKey: ActivityFlashView.flashAnimationKey) != nil, "the flash plays")
+
+        // An idle tab has no flash view yet; the one built for the new skill flashes too.
+        bar.controller.updateTab(bar.tabID(1), activity: .some(TabActivity(kind: .highlight, generation: 7)))
+        try bar.settle { bar in
+            bar.views(ActivityFlashView.self).count == 2 && bar.views(ActivityFlashView.self).allSatisfy { $0.flashCount == 1 }
+        }
+        bar.pump()
+        #expect(bar.views(ActivityFlashView.self).map(\.flashCount) == [1, 1], "each skill flashes once")
+    }
+
+    @Test("A tab that is created with a running skill, or gets one before its bar first shows, does not flash when the bar shows")
+    func flashForAGenerationOlderThanTheBarIsDropped() throws {
+        // Created while the host does not present the controller, then presented and mounted.
+        let environment = TitleEffectViewTests.FakeEnvironment()
+        let created = try HostedBar(
+            style: style,
+            titles: ["claude"],
+            environment: environment,
+            activities: [TabActivity(kind: .highlight, generation: 3)],
+            isPresentationActive: false,
+            mounted: false
+        )
+        defer { created.close() }
+        created.pump()
+        created.controller.isPresentationActive = true
+        created.addToWindow()
+        try created.settle { $0.views(ActivityFlashView.self).count == 1 }
+        let createdFlash = try #require(created.views(ActivityFlashView.self).first)
+        #expect(createdFlash.flashCount == 0, "the tab was created after its skill started")
+        #expect(createdFlash.flashRequestCount == 0)
+
+        // A presented controller whose bar is not mounted yet gets a skill, then the bar shows.
+        let late = try HostedBar(style: style, titles: ["claude"], environment: environment, mounted: false)
+        defer { late.close() }
+        late.pump()
+        late.controller.updateTab(late.tabID(0), activity: .some(TabActivity(kind: .highlight, generation: 4)))
+        late.addToWindow()
+        try late.settle { $0.views(ActivityFlashView.self).count == 1 }
+        let lateFlash = try #require(late.views(ActivityFlashView.self).first)
+        #expect(lateFlash.flashCount == 0, "the bar was first mounted after the skill started")
+        #expect(lateFlash.flashRequestCount == 0)
+    }
+
     @Test("The effect overlay does not take clicks away from the tab")
     func effectDoesNotTakeClicks() throws {
         let bar = try HostedBar(style: style, titles: ["claude", "zsh"])
@@ -511,7 +617,12 @@ struct TabActivityTests {
         let evaluations = EvaluationCounter()
         private let window: NSWindow
         private let hostingView: NSHostingView<AnyView>
+        private let barView: AnyView
 
+        /// - Parameters:
+        ///   - activities: The activity each tab is created with, in tab order; none past the end.
+        ///   - isPresentationActive: The controller's presentation flag while the tabs are created.
+        ///   - mounted: Whether the bar starts in the window; otherwise ``addToWindow()`` puts it there.
         init(
             style: TitleEffectStyle?,
             titles: [String],
@@ -521,7 +632,10 @@ struct TabActivityTests {
             tabMaxWidth: CGFloat = 220,
             selectedTabStyle: SelectedTabStyle? = nil,
             environment: (any TitleEffectEnvironment)? = nil,
-            countsTabEvaluations: Bool = false
+            countsTabEvaluations: Bool = false,
+            activities: [TabActivity?] = [],
+            isPresentationActive: Bool = true,
+            mounted: Bool = true
         ) throws {
             _ = NSApplication.shared
             let appearance = BonsplitConfiguration.Appearance(
@@ -533,6 +647,7 @@ struct TabActivityTests {
                 titleEffectStyle: style
             )
             controller = BonsplitController(configuration: BonsplitConfiguration(appearance: appearance))
+            controller.isPresentationActive = isPresentationActive
             if let environment {
                 controller.titleEffectEnvironment = environment
             }
@@ -544,23 +659,65 @@ struct TabActivityTests {
                 }
             }
             let pane = try #require(controller.internalController.rootNode.allPanes.first)
-            tabs = titles.map { TabItem(title: $0, icon: icon) }
-            pane.tabs = tabs
+            tabs = titles.enumerated().map { index, title in
+                TabItem(title: title, icon: icon, activity: activities.indices.contains(index) ? activities[index] : nil)
+            }
+            // Added through the controller, so that `updateTab` finds them.
+            pane.tabs = []
+            for tab in tabs {
+                controller.internalController.addTab(tab, toPane: pane.id)
+            }
             pane.selectedTabId = tabs[0].id
             let tabBar = TabBarView(pane: pane, isFocused: true, showSplitButtons: false)
                 .environment(controller)
                 .environment(controller.internalController)
-            hostingView = NSHostingView(rootView: AnyView(tabBar))
+            barView = AnyView(tabBar)
+            hostingView = NSHostingView(rootView: barView)
             let size = NSSize(width: 480, height: tabBarHeight)
             window = NSWindow(contentRect: NSRect(origin: .zero, size: size), styleMask: [.titled], backing: .buffered, defer: false)
             window.isReleasedWhenClosed = false
             hostingView.frame = NSRect(origin: .zero, size: size)
-            window.contentView?.addSubview(hostingView)
+            if mounted {
+                window.contentView?.addSubview(hostingView)
+            }
             window.makeKeyAndOrderFront(nil)
         }
 
         func close() {
             window.orderOut(nil)
+        }
+
+        /// The public id of the tab at `index`.
+        func tabID(_ index: Int) -> TabID {
+            TabID(uuid: tabs[index].id)
+        }
+
+        /// Takes the bar out of the window; its views stay built.
+        func removeFromWindow() {
+            hostingView.removeFromSuperview()
+        }
+
+        /// Puts the bar in the window.
+        func addToWindow() {
+            window.contentView?.addSubview(hostingView)
+        }
+
+        /// Tears the bar's views down, as SwiftUI does when a host stops showing a workspace.
+        func tearDown() {
+            hostingView.rootView = AnyView(EmptyView())
+        }
+
+        /// Builds the bar's views again.
+        func rebuild() {
+            hostingView.rootView = barView
+        }
+
+        /// Runs layout and the run loop a few times, whatever the bar shows.
+        func pump(passes: Int = 10) {
+            for _ in 0..<passes {
+                window.contentView?.layoutSubtreeIfNeeded()
+                RunLoop.current.run(mode: .default, before: Date().addingTimeInterval(0.01))
+            }
         }
 
         /// Every view of `type` in the bar.
