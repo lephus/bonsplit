@@ -30,9 +30,14 @@ public struct TabActivity: Sendable, Equatable, Hashable {
     /// While the activity is ``Kind/highlight``, a generation the tab has not shown yet plays the
     /// one-time flash. The same generation shown again, even after the effect paused, does not.
     ///
-    /// The flash plays once per generation per tab instance. A tab the host rebuilds, for example one
-    /// dropped into another workspace or window through `onExternalTabDrop`, has no memory of it and
-    /// may flash again. A bar first mounted after the generation started may flash late.
+    /// The flash belongs to the start of the skill or workflow, so a generation that starts where it
+    /// cannot be seen never flashes: one handed to the tab while ``BonsplitController/isPresentationActive``
+    /// is false or while the tab is not on screen (its bar not mounted, its window closed), and one a
+    /// tab is created with. Neither presenting the bar again nor mounting it later plays it.
+    ///
+    /// The flash plays at most once per generation per tab instance. A tab the host rebuilds, for
+    /// example one dropped into another workspace or window through `onExternalTabDrop`, has no memory
+    /// of it and flashes again if it is handed the same generation while it is on screen.
     public var generation: UInt64
 
     /// Words VoiceOver adds after the tab's title while the effect is drawn, such as "Thinking…".

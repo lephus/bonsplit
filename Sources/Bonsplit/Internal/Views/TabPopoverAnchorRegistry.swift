@@ -2,7 +2,9 @@ import AppKit
 import SwiftUI
 
 /// Laid-out AppKit views a host can anchor a popover to, per tab: the tab
-/// item itself and, when shown, its presence accessory.
+/// item itself and, when shown, its presence accessory. The controller also
+/// asks it whether a tab is on screen when a skill or workflow starts, to drop
+/// a flash nobody could see.
 ///
 /// Views register while they are in a window and drop out when they leave or
 /// deallocate, so a lookup never returns a view from a torn-down strip.
@@ -41,6 +43,11 @@ enum TabPopoverAnchorRegistry {
             }
         }
         return nil
+    }
+
+    /// Whether the tab's item view is laid out on screen: in a window, not hidden and not scrolled away.
+    static func isTabItemOnScreen(_ tabId: UUID) -> Bool {
+        table(.tabItem).object(forKey: tabId as NSUUID).map(isOnScreen) ?? false
     }
 
     private static func isOnScreen(_ view: NSView) -> Bool {

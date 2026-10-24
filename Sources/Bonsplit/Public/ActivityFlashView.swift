@@ -39,8 +39,14 @@ public final class ActivityFlashView: NSView {
     /// ``configure(kind:generation:style:)`` flashes for a highlight whose generation differs from this
     /// value, then stores that generation here. A host that builds the view again, or reuses it, for
     /// content that already flashed sets this to that content's generation before configuring, so the
-    /// same skill or workflow does not flash twice.
-    public var flashedGeneration: UInt64?
+    /// same skill or workflow does not flash twice. Setting it to another generation also drops a
+    /// flash still waiting for the view to be on screen: it belonged to content that moved on.
+    public var flashedGeneration: UInt64? {
+        didSet {
+            guard flashedGeneration != oldValue else { return }
+            isFlashPending = false
+        }
+    }
 
     /// Whether the view may flash: hosts turn it off for rows that are scrolled away or not presented.
     ///

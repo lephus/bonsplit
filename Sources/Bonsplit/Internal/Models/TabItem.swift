@@ -47,12 +47,15 @@ final class TabItem: Identifiable, Hashable, Codable {
     /// What a coding agent is doing in this tab; drives the title effect, the activity glyph and the flash.
     /// Runtime state: never encoded.
     var activity: TabActivity?
-    /// The highlight generation whose flash this tab already played or skipped.
+    /// The highlight generation whose flash this tab already played or dropped.
     ///
     /// Kept on the tab rather than on the flash view, so a flash view that SwiftUI builds again
-    /// (after the activity paused, or after the tab was dragged to another pane of the same
-    /// controller, which moves this object) does not flash again for the same skill or workflow.
-    /// APIs that rebuild a tab from a ``Tab`` snapshot start without it. Not observed, never encoded.
+    /// (after the activity paused, after the bar was unmounted, or after the tab was dragged to
+    /// another pane of the same controller, which moves this object) does not flash again for the
+    /// same skill or workflow. A generation that starts where its flash cannot be seen is recorded
+    /// here without one (``dropActivityFlash()``): the one a tab is created with, since no view of
+    /// the new tab saw it start, and one `updateTab` hands it while it is hidden. Not observed,
+    /// never encoded.
     @ObservationIgnored var flashedActivityGeneration: UInt64?
 
     init(
@@ -89,6 +92,15 @@ final class TabItem: Identifiable, Hashable, Codable {
         self.showsRemoteIndicator = showsRemoteIndicator
         self.presence = presence
         self.activity = activity
+        dropActivityFlash()
+    }
+
+    /// Takes the current highlight's generation as flashed without a flash, for a skill or
+    /// workflow that started where no flash of this tab could be seen. Does nothing for other
+    /// activities.
+    func dropActivityFlash() {
+        guard let activity, activity.kind == .highlight else { return }
+        flashedActivityGeneration = activity.generation
     }
 
     func hash(into hasher: inout Hasher) {

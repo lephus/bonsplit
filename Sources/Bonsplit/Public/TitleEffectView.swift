@@ -17,7 +17,8 @@ import QuartzCore
 /// moves only while ``isPresentationActive`` is true and its ``TitleEffectEnvironment`` says it
 /// can be seen and motion is allowed. Otherwise it holds a still look: a working title in the
 /// running color (``TitleEffectStyle/glyphWorkingHex``) and a highlighted title in a still pastel
-/// gradient.
+/// gradient. Moving or still, a short highlighted title shows every color of the loop across its
+/// text at once, and a long one half of the loop.
 ///
 /// ```swift
 /// let effect = TitleEffectView()
@@ -63,6 +64,10 @@ public final class TitleEffectView: NSView {
     private var style: TitleEffectStyle?
     private var colors: TitleEffectColors?
     private var laidOutSize: CGSize?
+    /// Width of the text as the mask last drew it; nil before the first mask.
+    private var textWidth: CGFloat?
+    /// The gradient span the flow on the layer was made for.
+    private var flowSpanInUse: CGFloat?
 
     /// The mask image last drawn, and what it was drawn for.
     private struct RenderedMask: Equatable {
@@ -76,10 +81,30 @@ public final class TitleEffectView: NSView {
     private static let sweepSpan: CGFloat = 2.5
     private static let sweepStartX: CGFloat = -1.5
 
-    /// The highlight gradient holds the color loop twice; one loop is two widths long, and the flow
-    /// slides it one loop to the right so it starts over where it began.
-    private static let flowSpan: CGFloat = 4
-    private static let flowStartX: CGFloat = -2
+    /// The highlight gradient holds the color loop twice, and the flow slides it one loop to the
+    /// right so it starts over where it began. A long title's loop is two view widths, so the
+    /// gradient spans four; a short title's is shorter (``highlightLoopLength(textWidth:viewWidth:)``).
+    private static let longFlowSpan: CGFloat = 4
+
+    /// Text at most this many points wide shows the whole highlight loop across it at once.
+    static let fullLoopTextWidth: CGFloat = 80
+
+    /// Text at least this many points wide keeps a loop of two view widths.
+    static let wideLoopTextWidth: CGFloat = 160
+
+    /// The length, in points, of one highlight loop over text `textWidth` points wide in a view
+    /// `viewWidth` points wide.
+    ///
+    /// Text up to ``fullLoopTextWidth`` gets a loop as long as itself, so all of its colors show at
+    /// once and no single one, such as the gold, can pass for the working yellow. Text from
+    /// ``wideLoopTextWidth`` on keeps two view widths. In between, the length moves linearly from
+    /// one to the other, so a title that grows by a letter does not jump.
+    static func highlightLoopLength(textWidth: CGFloat, viewWidth: CGFloat) -> CGFloat {
+        let long = 2 * viewWidth
+        guard textWidth > 0, textWidth < wideLoopTextWidth else { return long }
+        let blend = max(0, textWidth - fullLoopTextWidth) / (wideLoopTextWidth - fullLoopTextWidth)
+        return textWidth + (long - textWidth) * blend
+    }
 
     /// Creates an effect view with nothing to show until it is configured.
     ///
@@ -226,11 +251,18 @@ public final class TitleEffectView: NSView {
         renderedMask = rendered
         maskRenderCount += 1
         let image = mask.image(size: rendered.size, scale: rendered.scale)
+        textWidth = mask.textWidth(width: rendered.size.width)
         CATransaction.begin()
         CATransaction.setDisableActions(true)
         textMaskLayer.contents = image
         textMaskLayer.contentsScale = rendered.scale
         CATransaction.commit()
+    }
+
+    /// The highlight gradient's span in units of the view's width: two loops.
+    private var highlightSpan: CGFloat {
+        guard let textWidth, bounds.width > 0 else { return Self.longFlowSpan }
+        return 2 * Self.highlightLoopLength(textWidth: textWidth, viewWidth: bounds.width) / bounds.width
     }
 
     private var resolvedColors: TitleEffectColors? {
@@ -267,11 +299,17 @@ public final class TitleEffectView: NSView {
             }
         case .highlight:
             gradientLayer.removeAnimation(forKey: Self.sweepAnimationKey)
+            let span = highlightSpan
+            if span != flowSpanInUse {
+                // The text or the size gave the loop a new length: the flow starts over with it.
+                gradientLayer.removeAnimation(forKey: Self.flowAnimationKey)
+            }
             if gradientLayer.animation(forKey: Self.flowAnimationKey) == nil {
                 gradientLayer.add(
-                    makeTravel(startX: Self.flowStartX, span: Self.flowSpan, duration: style.highlightCycleDuration),
+                    makeTravel(startX: -span / 2, span: span, duration: style.highlightCycleDuration),
                     forKey: Self.flowAnimationKey
                 )
+                flowSpanInUse = span
             }
         }
     }
@@ -302,11 +340,11 @@ public final class TitleEffectView: NSView {
                 gradientLayer.endPoint = CGPoint(x: 1, y: 0.5)
             }
         case .highlight:
-            // Still or moving, the title starts on the first half of the loop.
+            // Still or moving, the title starts on the first loop, at the same length.
             gradientLayer.colors = colors.highlightGradient
             gradientLayer.locations = nil
             gradientLayer.startPoint = CGPoint(x: 0, y: 0.5)
-            gradientLayer.endPoint = CGPoint(x: Self.flowSpan, y: 0.5)
+            gradientLayer.endPoint = CGPoint(x: highlightSpan, y: 0.5)
         }
     }
 

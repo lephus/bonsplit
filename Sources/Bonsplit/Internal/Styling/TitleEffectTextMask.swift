@@ -31,14 +31,7 @@ struct TitleEffectTextMask: Equatable {
             return nil
         }
 
-        let storage = NSTextStorage(attributedString: maskString())
-        let layoutManager = NSLayoutManager()
-        let container = NSTextContainer(size: CGSize(width: size.width, height: .greatestFiniteMagnitude))
-        container.lineFragmentPadding = 0
-        container.maximumNumberOfLines = max(0, maximumNumberOfLines)
-        container.lineBreakMode = .byTruncatingTail
-        layoutManager.addTextContainer(container)
-        storage.addLayoutManager(layoutManager)
+        let layout = layOut(width: size.width)
 
         // Flipped, in points, so TextKit draws its first line from the top-left corner.
         context.scaleBy(x: scale, y: scale)
@@ -46,9 +39,32 @@ struct TitleEffectTextMask: Equatable {
         context.scaleBy(x: 1, y: -1)
         NSGraphicsContext.saveGraphicsState()
         NSGraphicsContext.current = NSGraphicsContext(cgContext: context, flipped: true)
-        layoutManager.drawGlyphs(forGlyphRange: layoutManager.glyphRange(for: container), at: .zero)
+        layout.layoutManager.drawGlyphs(forGlyphRange: layout.layoutManager.glyphRange(for: layout.container), at: .zero)
         NSGraphicsContext.restoreGraphicsState()
         return context.makeImage()
+    }
+
+    /// The width, in points, of the text as the mask draws it `width` points wide: its widest line,
+    /// with the ellipsis when the text is cut.
+    func textWidth(width: CGFloat) -> CGFloat {
+        guard text.length > 0, width > 0 else { return 0 }
+        let layout = layOut(width: width)
+        return layout.layoutManager.usedRect(for: layout.container).width
+    }
+
+    /// The text laid out `width` points wide, as the mask draws it. The storage owns the layout
+    /// manager, so it is returned to keep the layout alive.
+    private func layOut(width: CGFloat) -> (storage: NSTextStorage, layoutManager: NSLayoutManager, container: NSTextContainer) {
+        let storage = NSTextStorage(attributedString: maskString())
+        let layoutManager = NSLayoutManager()
+        let container = NSTextContainer(size: CGSize(width: width, height: .greatestFiniteMagnitude))
+        container.lineFragmentPadding = 0
+        container.maximumNumberOfLines = max(0, maximumNumberOfLines)
+        container.lineBreakMode = .byTruncatingTail
+        layoutManager.addTextContainer(container)
+        storage.addLayoutManager(layoutManager)
+        layoutManager.ensureLayout(for: container)
+        return (storage, layoutManager, container)
     }
 
     /// The text in opaque white, every paragraph wrapping at words so that the line limit alone

@@ -64,7 +64,8 @@ public final class BonsplitController {
     /// Hosts turn it off while the controller's views stay alive but cannot be seen, such as a
     /// background workspace kept in a `ZStack` at zero opacity: AppKit still calls those views
     /// visible. While it is false, title effects and activity glyphs hold their still look, and the
-    /// flash for a new skill or workflow is dropped rather than played once presentation resumes.
+    /// flash for a new skill or workflow is dropped rather than played once presentation resumes,
+    /// even by tab views built after it.
     /// While it is true the effects' own checks (window occlusion, hidden views, Reduce Motion)
     /// still apply. Only bars with a ``BonsplitConfiguration/Appearance/titleEffectStyle`` read it,
     /// so other bars never re-render when it changes. Defaults to `true`.
@@ -421,7 +422,14 @@ public final class BonsplitController {
             currentTab.showsRemoteIndicator = showsRemoteIndicator
         }
         if let presence, currentTab.presence != presence { currentTab.presence = presence }
-        if let activity, currentTab.activity != activity { currentTab.activity = activity }
+        if let activity, currentTab.activity != activity {
+            currentTab.activity = activity
+            // A skill or workflow that starts where its flash cannot be seen never flashes: not when
+            // the host presents the bar again, nor when the tab's views are built later.
+            if !isPresentationActive || !TabPopoverAnchorRegistry.isTabItemOnScreen(currentTab.id) {
+                currentTab.dropActivityFlash()
+            }
+        }
     }
 
     /// Close a tab by ID
